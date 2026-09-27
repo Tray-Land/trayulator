@@ -6,8 +6,7 @@ namespace Trayulator.Services;
 
 /// <summary>
 /// Typed wrapper over <see cref="ApplicationData.LocalSettings"/>. Every read falls back to a
-/// default so a missing or corrupt value never crashes the app. Not for secrets: see
-/// <see cref="Secrets"/> (build-time app keys) and <see cref="CredentialStore"/> (user tokens).
+/// default so a missing or corrupt value never crashes the app. Not for secrets.
 /// </summary>
 /// <remarks>
 /// LocalSettings values must be small (8 KB each) WinRT primitives. Store enums as int, and lists
@@ -22,6 +21,20 @@ internal static class SettingsService
     {
         get => Get(nameof(HasLaunchedBefore), false);
         set => Set(nameof(HasLaunchedBefore), value);
+    }
+
+    /// <summary>When on, the flyout ignores light-dismiss and stays open until hidden explicitly.</summary>
+    public static bool IsPinned
+    {
+        get => Get(nameof(IsPinned), false);
+        set => Set(nameof(IsPinned), value);
+    }
+
+    /// <summary>When on, every successful evaluation also puts the result on the clipboard.</summary>
+    public static bool CopyResultOnEvaluate
+    {
+        get => Get(nameof(CopyResultOnEvaluate), false);
+        set => Set(nameof(CopyResultOnEvaluate), value);
     }
 
     public static T? GetJson<T>(string key, JsonTypeInfo<T> typeInfo)

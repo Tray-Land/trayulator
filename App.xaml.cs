@@ -27,7 +27,6 @@ public partial class App : Application
     private RegisteredWaitHandle? _showWait;
     private TrayIcon? _trayIcon;
     private TrayFlyoutWindow? _flyout;
-    private SettingsWindow? _settings;
     private DispatcherQueue? _dispatcher;
     private bool _isExiting;
 
@@ -105,21 +104,11 @@ public partial class App : Application
         flyout.ShowPopup();
     }
 
+    /// <summary>Opens the flyout on its settings page.</summary>
     public void ShowSettings()
     {
-        _flyout?.HidePopup();
-        if (_settings is null)
-        {
-            _settings = new SettingsWindow();
-            _settings.Closed += (_, _) =>
-            {
-                _settings = null;
-                ReleaseIdleResourcesIfNoWindows();
-            };
-        }
-
-        _settings.Activate();
-        _settings.BringToFront();
+        ShowFlyout();
+        _flyout?.ShowSettings();
     }
 
     private void InitializeTrayIcon()
@@ -162,26 +151,20 @@ public partial class App : Application
             _flyout.Closed += (_, _) =>
             {
                 _flyout = null;
-                ReleaseIdleResourcesIfNoWindows();
+                if (!_isExiting)
+                {
+                    MemoryService.ReleaseIdle();
+                }
             };
         }
 
         return _flyout;
     }
 
-    private void ReleaseIdleResourcesIfNoWindows()
-    {
-        if (_flyout is null && _settings is null && !_isExiting)
-        {
-            MemoryService.ReleaseIdle();
-        }
-    }
-
     private void ExitApp()
     {
         _isExiting = true;
         _flyout?.CloseWindow();
-        _settings?.Close();
 
         if (_trayIcon is not null)
         {

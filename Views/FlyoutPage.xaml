@@ -5,87 +5,254 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="Transparent">
 
-    <Grid Padding="16,12,12,16" RowSpacing="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <Page.Resources>
+        <!--  Keys never take focus, so the entry keeps its caret and selection while they're clicked.  -->
+        <Style
+            x:Key="KeyStyle"
+            BasedOn="{StaticResource DefaultButtonStyle}"
+            TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="AllowFocusOnInteraction" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+        </Style>
+        <Style
+            x:Key="OperatorKeyStyle"
+            BasedOn="{StaticResource KeyStyle}"
+            TargetType="Button">
+            <Setter Property="Background" Value="{ThemeResource ControlFillColorSecondaryBrush}" />
+        </Style>
+        <Style
+            x:Key="EqualsKeyStyle"
+            BasedOn="{StaticResource AccentButtonStyle}"
+            TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="FontSize" Value="20" />
+            <Setter Property="AllowFocusOnInteraction" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+        </Style>
+        <Style
+            x:Key="FlyoutIconToggleButtonStyle"
+            BasedOn="{StaticResource DefaultToggleButtonStyle}"
+            TargetType="ToggleButton">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
 
-        <!--  Header  -->
-        <Grid ColumnSpacing="4">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBlock
-                x:Name="TitleText"
-                VerticalAlignment="Center"
-                Style="{StaticResource SubtitleTextBlockStyle}"
-                Text="Trayulator" />
-            <Button
-                x:Name="RefreshButton"
-                Grid.Column="1"
-                AutomationProperties.Name="Refresh"
-                Click="RefreshButton_Click"
-                Style="{StaticResource FlyoutIconButtonStyle}"
-                ToolTipService.ToolTip="Refresh">
-                <FontIcon FontSize="14" Glyph="&#xE72C;" />
-            </Button>
-            <Button
-                Grid.Column="2"
-                AutomationProperties.Name="Settings"
-                Click="SettingsButton_Click"
-                Style="{StaticResource FlyoutIconButtonStyle}"
-                ToolTipService.ToolTip="Settings">
-                <FontIcon FontSize="14" Glyph="&#xE713;" />
-            </Button>
+        <!--  Back from settings: the calculator slides in from the left, mirroring the settings entrance.  -->
+        <Storyboard x:Key="CalculatorEnter">
+            <DoubleAnimation
+                Storyboard.TargetName="CalculatorOffset"
+                Storyboard.TargetProperty="X"
+                From="-48"
+                To="0"
+                Duration="0:0:0.3">
+                <DoubleAnimation.EasingFunction>
+                    <ExponentialEase EasingMode="EaseOut" Exponent="7" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation
+                Storyboard.TargetName="CalculatorView"
+                Storyboard.TargetProperty="Opacity"
+                From="0"
+                To="1"
+                Duration="0:0:0.2" />
+        </Storyboard>
+    </Page.Resources>
+
+    <Grid>
+        <Grid
+            x:Name="CalculatorView"
+            Padding="12,10,12,12"
+            RowSpacing="10">
+            <Grid.RenderTransform>
+                <TranslateTransform x:Name="CalculatorOffset" />
+            </Grid.RenderTransform>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!--  Header  -->
+            <Grid Padding="4,0,0,0" ColumnSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock
+                    x:Name="TitleText"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="Trayulator" />
+                <ToggleButton
+                    x:Name="PinButton"
+                    Grid.Column="1"
+                    AutomationProperties.Name="Pin open"
+                    Click="PinButton_Click"
+                    Style="{StaticResource FlyoutIconToggleButtonStyle}"
+                    ToolTipService.ToolTip="Pin open">
+                    <FontIcon
+                        x:Name="PinIcon"
+                        FontSize="14"
+                        Glyph="&#xE718;" />
+                </ToggleButton>
+                <Button
+                    Grid.Column="2"
+                    AutomationProperties.Name="Settings"
+                    Click="SettingsButton_Click"
+                    Style="{StaticResource FlyoutIconButtonStyle}"
+                    ToolTipService.ToolTip="Settings">
+                    <FontIcon FontSize="14" Glyph="&#xE713;" />
+                </Button>
+            </Grid>
+
+            <!--  Display: the previous equation (or an error) above a large, editable entry  -->
+            <Border
+                Grid.Row="1"
+                Padding="12,8,4,8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel>
+                    <Grid Margin="0,0,8,0" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel
+                            x:Name="CopiedBadge"
+                            VerticalAlignment="Center"
+                            Orientation="Horizontal"
+                            Spacing="4"
+                            Visibility="Collapsed">
+                            <FontIcon
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Glyph="&#xE8C8;" />
+                            <TextBlock
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Text="Copied" />
+                        </StackPanel>
+                        <TextBlock
+                            x:Name="EquationText"
+                            Grid.Column="1"
+                            MinHeight="20"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            IsTextSelectionEnabled="True"
+                            TextAlignment="Right"
+                            TextTrimming="CharacterEllipsis" />
+                        <TextBlock
+                            x:Name="ErrorText"
+                            Grid.Column="1"
+                            MinHeight="20"
+                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                            TextAlignment="Right"
+                            TextTrimming="CharacterEllipsis"
+                            Visibility="Collapsed" />
+                    </Grid>
+
+                    <!--
+                        AcceptsReturn hides the TextBox's clear button; Enter is intercepted in
+                        PreviewKeyDown and line breaks are stripped in BeforeTextChanging.
+                    -->
+                    <TextBox
+                        x:Name="Entry"
+                        Padding="0,0,8,0"
+                        AcceptsReturn="True"
+                        AutomationProperties.Name="Expression"
+                        BeforeTextChanging="Entry_BeforeTextChanging"
+                        BorderThickness="0"
+                        FontSize="40"
+                        FontWeight="SemiBold"
+                        IsSpellCheckEnabled="False"
+                        IsTextPredictionEnabled="False"
+                        PlaceholderText="0"
+                        PreviewKeyDown="Entry_PreviewKeyDown"
+                        TextAlignment="Right"
+                        TextChanging="Entry_TextChanging"
+                        TextWrapping="NoWrap">
+                        <TextBox.Resources>
+                            <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                            <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                        </TextBox.Resources>
+                    </TextBox>
+                </StackPanel>
+            </Border>
+
+            <!--  Keypad: Tag is the text a key inserts  -->
+            <Grid
+                Grid.Row="2"
+                ColumnSpacing="4"
+                RowSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                    <ColumnDefinition />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+
+                <Button Click="Key_Click" Content="(" Style="{StaticResource OperatorKeyStyle}" Tag="(" AutomationProperties.Name="Open bracket" />
+                <Button Grid.Column="1" Click="Key_Click" Content=")" Style="{StaticResource OperatorKeyStyle}" Tag=")" AutomationProperties.Name="Close bracket" />
+                <Button Grid.Column="2" Click="Key_Click" Content="√x" Style="{StaticResource OperatorKeyStyle}" Tag="sqrt(" AutomationProperties.Name="Square root" />
+                <Button Grid.Column="3" Click="Key_Click" Content="xʸ" Style="{StaticResource OperatorKeyStyle}" Tag="^" AutomationProperties.Name="Power" />
+
+                <Button Grid.Row="1" Click="Clear_Click" Content="C" Style="{StaticResource OperatorKeyStyle}" AutomationProperties.Name="Clear" ToolTipService.ToolTip="Clear" />
+                <Button Grid.Row="1" Grid.Column="1" Click="Backspace_Click" Style="{StaticResource OperatorKeyStyle}" AutomationProperties.Name="Backspace" ToolTipService.ToolTip="Backspace">
+                    <FontIcon FontSize="16" Glyph="&#xE750;" />
+                </Button>
+                <Button Grid.Row="1" Grid.Column="2" Click="Key_Click" Content="π" Style="{StaticResource OperatorKeyStyle}" Tag="π" AutomationProperties.Name="Pi" />
+                <Button Grid.Row="1" Grid.Column="3" Click="Key_Click" Content="÷" Style="{StaticResource OperatorKeyStyle}" Tag="÷" AutomationProperties.Name="Divide" />
+
+                <Button Grid.Row="2" Click="Key_Click" Content="7" Style="{StaticResource KeyStyle}" Tag="7" />
+                <Button Grid.Row="2" Grid.Column="1" Click="Key_Click" Content="8" Style="{StaticResource KeyStyle}" Tag="8" />
+                <Button Grid.Row="2" Grid.Column="2" Click="Key_Click" Content="9" Style="{StaticResource KeyStyle}" Tag="9" />
+                <Button Grid.Row="2" Grid.Column="3" Click="Key_Click" Content="×" Style="{StaticResource OperatorKeyStyle}" Tag="×" AutomationProperties.Name="Multiply" />
+
+                <Button Grid.Row="3" Click="Key_Click" Content="4" Style="{StaticResource KeyStyle}" Tag="4" />
+                <Button Grid.Row="3" Grid.Column="1" Click="Key_Click" Content="5" Style="{StaticResource KeyStyle}" Tag="5" />
+                <Button Grid.Row="3" Grid.Column="2" Click="Key_Click" Content="6" Style="{StaticResource KeyStyle}" Tag="6" />
+                <Button Grid.Row="3" Grid.Column="3" Click="Key_Click" Content="−" Style="{StaticResource OperatorKeyStyle}" Tag="−" AutomationProperties.Name="Minus" />
+
+                <Button Grid.Row="4" Click="Key_Click" Content="1" Style="{StaticResource KeyStyle}" Tag="1" />
+                <Button Grid.Row="4" Grid.Column="1" Click="Key_Click" Content="2" Style="{StaticResource KeyStyle}" Tag="2" />
+                <Button Grid.Row="4" Grid.Column="2" Click="Key_Click" Content="3" Style="{StaticResource KeyStyle}" Tag="3" />
+                <Button Grid.Row="4" Grid.Column="3" Click="Key_Click" Content="+" Style="{StaticResource OperatorKeyStyle}" Tag="+" AutomationProperties.Name="Plus" />
+
+                <Button Grid.Row="5" Grid.ColumnSpan="2" Click="Key_Click" Content="0" Style="{StaticResource KeyStyle}" Tag="0" />
+                <Button Grid.Row="5" Grid.Column="2" Click="Key_Click" Content="." Style="{StaticResource KeyStyle}" Tag="." AutomationProperties.Name="Decimal point" />
+                <Button Grid.Row="5" Grid.Column="3" Click="Equals_Click" Content="=" Style="{StaticResource EqualsKeyStyle}" AutomationProperties.Name="Equals" ToolTipService.ToolTip="Evaluate (Enter)" />
+            </Grid>
         </Grid>
 
-        <!--  Errors keep the last good content visible underneath  -->
-        <InfoBar
-            x:Name="StatusBar"
-            Grid.Row="1"
-            IsClosable="False"
-            IsOpen="False"
-            Severity="Warning" />
-
-        <!--  Content: replace with the app's own view  -->
-        <Border
-            Grid.Row="2"
-            Padding="16"
-            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-            BorderThickness="1"
-            CornerRadius="8">
-            <StackPanel VerticalAlignment="Center" Spacing="4">
-                <TextBlock
-                    x:Name="ValueText"
-                    HorizontalAlignment="Center"
-                    Style="{StaticResource TitleLargeTextBlockStyle}"
-                    Text="--" />
-                <TextBlock
-                    HorizontalAlignment="Center"
-                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                    Text="Replace this card with the app's content." />
-            </StackPanel>
-        </Border>
-
-        <!--  Footer  -->
-        <Grid Grid.Row="3">
-            <TextBlock
-                x:Name="UpdatedText"
-                VerticalAlignment="Center"
-                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                Style="{StaticResource CaptionTextBlockStyle}" />
-            <ProgressRing
-                x:Name="LoadingRing"
-                Width="16"
-                Height="16"
-                HorizontalAlignment="Right"
-                IsActive="False" />
-        </Grid>
+        <!--  Settings slide in over the calculator; the page is built on open and dropped on back.  -->
+        <ContentPresenter x:Name="SettingsHost" Visibility="Collapsed">
+            <ContentPresenter.ContentTransitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromHorizontalOffset="48" FromVerticalOffset="0" />
+                </TransitionCollection>
+            </ContentPresenter.ContentTransitions>
+        </ContentPresenter>
     </Grid>
 </Page>

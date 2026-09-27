@@ -1,28 +1,36 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Trayulator.Services;
 using Windows.ApplicationModel;
-using WinUIEx;
 
 namespace Trayulator.Views;
 
-public sealed partial class SettingsWindow : WindowEx
+/// <summary>
+/// Settings, shown inside the flyout in place of the calculator. Built fresh each time it opens,
+/// so it always reflects the current startup state. Changes apply immediately.
+/// </summary>
+public sealed partial class SettingsPage : Page
 {
     private bool _loading = true;
 
-    public SettingsWindow()
+    public SettingsPage()
     {
         InitializeComponent();
-        Title = $"{App.DisplayName} Settings";
-        AppTitleBar.Title = Title;
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
-        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
-        WindowPlacementService.CenterOnPrimary(this, 480, 560);
-
         VersionText.Text = $"{App.DisplayName} {GetVersion()}";
+        CopyResultToggle.IsOn = SettingsService.CopyResultOnEvaluate;
         _ = LoadStartupStateAsync();
         _loading = false;
+
+        // Focus lands on the first focusable element (the back button) when the calculator
+        // collapses; move it once the page is in the tree.
+        Loaded += (_, _) => FocusFirst();
     }
+
+    /// <summary>The user asked to go back to the calculator (back button).</summary>
+    public event EventHandler? BackRequested;
+
+    /// <summary>Focuses the first setting, not the back button, whose tooltip would pop up on focus.</summary>
+    private void FocusFirst() => CopyResultToggle.Focus(FocusState.Programmatic);
 
     private static string GetVersion()
     {
@@ -58,6 +66,16 @@ public sealed partial class SettingsWindow : WindowEx
             _ => "Keep the tray icon ready after you sign in.",
         };
         _loading = false;
+    }
+
+    private void BackButton_Click(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
+
+    private void CopyResultToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_loading)
+        {
+            SettingsService.CopyResultOnEvaluate = CopyResultToggle.IsOn;
+        }
     }
 
     private async void StartupToggle_Toggled(object sender, RoutedEventArgs e)

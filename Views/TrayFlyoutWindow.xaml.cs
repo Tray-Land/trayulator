@@ -18,14 +18,14 @@ namespace Trayulator.Views;
 
 /// <summary>
 /// Borderless, always-on-top popup shown against the tray icon, styled like the shell's own
-/// flyouts. Slides and fades in, light-dismisses when focus leaves. Dismissing only hides it, so
+/// flyouts. Slides and fades in, light-dismisses when focus leaves unless pinned. Dismissing only hides it, so
 /// reopening soon after is instant; after <see cref="CloseDelay"/> hidden it closes for real and
 /// the next open builds a new window, so the idle app holds no XAML tree.
 /// </summary>
 public sealed partial class TrayFlyoutWindow : WindowEx
 {
-    private const int PopupWidth = 360;
-    private const int PopupHeight = 480;
+    private const int PopupWidth = 340;
+    private const int PopupHeight = 520;
 
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int WS_EX_LAYERED = 0x00080000;
@@ -145,6 +145,9 @@ public sealed partial class TrayFlyoutWindow : WindowEx
 
         _page.OnShown();
     }
+
+    /// <summary>Switches the (visible) flyout to its settings page.</summary>
+    public void ShowSettings() => _page.ShowSettings();
 
     public void HidePopup()
     {
@@ -330,6 +333,13 @@ public sealed partial class TrayFlyoutWindow : WindowEx
     private void HideIfFocusLeftWindow()
     {
         _hideTimer.Stop();
+
+        // Pinned: stay on screen (always on top) until hidden explicitly with Escape or the tray icon.
+        if (SettingsService.IsPinned)
+        {
+            return;
+        }
+
         if (_isPopupVisible && !ShouldRemainVisible(PInvoke.GetForegroundWindow()))
         {
             HidePopup();
@@ -363,6 +373,11 @@ public sealed partial class TrayFlyoutWindow : WindowEx
     private void Escape_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
-        HidePopup();
+
+        // Escape steps back out of settings first, then hides.
+        if (!_page.GoBack())
+        {
+            HidePopup();
+        }
     }
 }
