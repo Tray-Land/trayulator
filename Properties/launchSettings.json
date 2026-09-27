@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Trayulator (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Trayulator (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
