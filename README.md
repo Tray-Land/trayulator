@@ -9,6 +9,7 @@ A small calculator that lives in the Windows notification area. Click the tray i
 - **Type or tap.** The display is a real text box, so you can type whole equations such as `(1250*1.08)/12` or use the keypad. Keys insert at the cursor.
 - **Evaluate in place.** Enter, typing `=`, or the **=** key replaces the equation with its result, and the equation moves to the line above, like Windows Calculator.
 - **Keep going.** After a result, an operator continues from it and a number starts over. `ans` is the previous result, and **Up** brings back the last equation to edit.
+- **History.** The history button (or Ctrl+H) slides a list of this session's equations up over the keypad. Pick one to load it back into the entry.
 - **Pin it open.** The pin button keeps the flyout on screen when you click elsewhere. Escape or the tray icon still hides it.
 - **Copy on evaluate.** An optional setting puts every result on the clipboard.
 - **Light on resources.** It does no work while hidden, needs no network access, and follows the taskbar's light or dark theme and accent color.
