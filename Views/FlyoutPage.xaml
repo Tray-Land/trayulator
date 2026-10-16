@@ -3,6 +3,7 @@
     x:Class="Trayulator.Views.FlyoutPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:core="using:Trayulator.Core"
     Background="Transparent">
 
     <Page.Resources>
@@ -63,6 +64,53 @@
                 To="1"
                 Duration="0:0:0.2" />
         </Storyboard>
+
+        <!--  History slides up over the keypad as the keys fade out; FlyoutPage sets the slide distance to the keypad's height.  -->
+        <Storyboard x:Key="HistoryEnter">
+            <DoubleAnimation
+                Storyboard.TargetName="HistoryOffset"
+                Storyboard.TargetProperty="Y"
+                To="0"
+                Duration="0:0:0.3">
+                <DoubleAnimation.EasingFunction>
+                    <ExponentialEase EasingMode="EaseOut" Exponent="7" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation
+                Storyboard.TargetName="HistoryPane"
+                Storyboard.TargetProperty="Opacity"
+                From="0"
+                To="1"
+                Duration="0:0:0.15" />
+            <DoubleAnimation
+                Storyboard.TargetName="Keypad"
+                Storyboard.TargetProperty="Opacity"
+                To="0"
+                Duration="0:0:0.15" />
+        </Storyboard>
+        <Storyboard x:Key="HistoryExit">
+            <DoubleAnimation
+                Storyboard.TargetName="HistoryOffset"
+                Storyboard.TargetProperty="Y"
+                From="0"
+                Duration="0:0:0.18">
+                <DoubleAnimation.EasingFunction>
+                    <ExponentialEase EasingMode="EaseIn" Exponent="4" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation
+                BeginTime="0:0:0.06"
+                Storyboard.TargetName="HistoryPane"
+                Storyboard.TargetProperty="Opacity"
+                To="0"
+                Duration="0:0:0.12" />
+            <DoubleAnimation
+                Storyboard.TargetName="Keypad"
+                Storyboard.TargetProperty="Opacity"
+                From="0"
+                To="1"
+                Duration="0:0:0.18" />
+        </Storyboard>
     </Page.Resources>
 
     <Grid>
@@ -85,6 +133,7 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock
                     x:Name="TitleText"
@@ -92,8 +141,21 @@
                     Style="{StaticResource BodyStrongTextBlockStyle}"
                     Text="Trayulator" />
                 <ToggleButton
-                    x:Name="PinButton"
+                    x:Name="HistoryButton"
                     Grid.Column="1"
+                    AutomationProperties.AutomationId="HistoryButton"
+                    AutomationProperties.Name="History"
+                    Click="HistoryButton_Click"
+                    Style="{StaticResource FlyoutIconToggleButtonStyle}"
+                    ToolTipService.ToolTip="History (Ctrl+H)">
+                    <ToggleButton.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="H" Modifiers="Control" />
+                    </ToggleButton.KeyboardAccelerators>
+                    <FontIcon FontSize="14" Glyph="&#xE81C;" />
+                </ToggleButton>
+                <ToggleButton
+                    x:Name="PinButton"
+                    Grid.Column="2"
                     AutomationProperties.Name="Pin open"
                     Click="PinButton_Click"
                     Style="{StaticResource FlyoutIconToggleButtonStyle}"
@@ -104,7 +166,7 @@
                         Glyph="&#xE718;" />
                 </ToggleButton>
                 <Button
-                    Grid.Column="2"
+                    Grid.Column="3"
                     AutomationProperties.Name="Settings"
                     Click="SettingsButton_Click"
                     Style="{StaticResource FlyoutIconButtonStyle}"
@@ -195,6 +257,7 @@
 
             <!--  Keypad: Tag is the text a key inserts  -->
             <Grid
+                x:Name="Keypad"
                 Grid.Row="2"
                 ColumnSpacing="4"
                 RowSpacing="4">
@@ -243,6 +306,90 @@
                 <Button Grid.Row="5" Grid.ColumnSpan="2" Click="Key_Click" Content="0" Style="{StaticResource KeyStyle}" Tag="0" />
                 <Button Grid.Row="5" Grid.Column="2" Click="Key_Click" Content="." Style="{StaticResource KeyStyle}" Tag="." AutomationProperties.Name="Decimal point" />
                 <Button Grid.Row="5" Grid.Column="3" Click="Equals_Click" Content="=" Style="{StaticResource EqualsKeyStyle}" AutomationProperties.Name="Equals" ToolTipService.ToolTip="Evaluate (Enter)" />
+            </Grid>
+
+            <!--  History covers the keypad, leaving the display in view. Picking an entry loads its expression.  -->
+            <Grid
+                x:Name="HistoryPane"
+                Grid.Row="2"
+                Padding="4"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                RowSpacing="4"
+                Visibility="Collapsed">
+                <Grid.RenderTransform>
+                    <TranslateTransform x:Name="HistoryOffset" />
+                </Grid.RenderTransform>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Padding="12,0,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Text="History" />
+                    <Button
+                        x:Name="ClearHistoryButton"
+                        Grid.Column="1"
+                        AutomationProperties.AutomationId="ClearHistoryButton"
+                        AutomationProperties.Name="Clear history"
+                        Click="ClearHistoryButton_Click"
+                        Style="{StaticResource FlyoutIconButtonStyle}"
+                        ToolTipService.ToolTip="Clear history">
+                        <FontIcon FontSize="14" Glyph="&#xE74D;" />
+                    </Button>
+                </Grid>
+
+                <ListView
+                    x:Name="HistoryList"
+                    Grid.Row="1"
+                    AutomationProperties.AutomationId="HistoryList"
+                    AutomationProperties.Name="History"
+                    IsItemClickEnabled="True"
+                    ItemClick="HistoryList_ItemClick"
+                    SelectionMode="None">
+                    <ListView.ItemContainerStyle>
+                        <Style BasedOn="{StaticResource DefaultListViewItemStyle}" TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="12,6" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="core:HistoryEntry">
+                            <StackPanel>
+                                <TextBlock
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="{x:Bind Expression}"
+                                    TextAlignment="Right"
+                                    TextTrimming="CharacterEllipsis" />
+                                <TextBlock
+                                    FontSize="20"
+                                    FontWeight="SemiBold"
+                                    Text="{x:Bind Result}"
+                                    TextAlignment="Right"
+                                    TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <TextBlock
+                    x:Name="HistoryEmptyText"
+                    Grid.Row="1"
+                    Margin="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="There's no history yet"
+                    TextWrapping="Wrap" />
             </Grid>
         </Grid>
 

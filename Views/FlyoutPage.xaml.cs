@@ -19,7 +19,11 @@ public sealed partial class FlyoutPage : Page, IDisposable
     private const string PinGlyph = "";
     private const string PinnedGlyph = "";
 
+    // Static so it outlives the page, which is rebuilt after the flyout's idle close.
+    private static readonly CalculationHistory History = new();
+
     private bool _settingText;
+    private bool _isHistoryOpen;
     private bool _justEvaluated;
     private bool _isEvaluating;
     private object? _answer;
@@ -32,12 +36,14 @@ public sealed partial class FlyoutPage : Page, IDisposable
         TitleText.Text = App.DisplayName;
         PinButton.IsChecked = SettingsService.IsPinned;
         UpdatePinButton();
+        ((Storyboard)Resources["HistoryExit"]).Completed += HistoryExit_Completed;
     }
 
     /// <summary>The flyout opened: always on the calculator, caret at the end of the entry.</summary>
     public void OnShown()
     {
         CloseSettings(animate: false);
+        CloseHistory(animate: false);
         FocusEntry();
     }
 
@@ -49,6 +55,7 @@ public sealed partial class FlyoutPage : Page, IDisposable
             return;
         }
 
+        CloseHistory(animate: false);
         _settings = new SettingsPage();
         _settings.BackRequested += (_, _) => GoBack();
         CalculatorView.Visibility = Visibility.Collapsed;
@@ -56,16 +63,77 @@ public sealed partial class FlyoutPage : Page, IDisposable
         SettingsHost.Content = _settings;
     }
 
-    /// <summary>Returns from settings to the calculator; false when already there.</summary>
+    /// <summary>Returns from settings or history to the calculator; false when already there.</summary>
     public bool GoBack()
     {
-        if (!CloseSettings(animate: true))
+        if (!CloseSettings(animate: true) && !CloseHistory(animate: true))
         {
             return false;
         }
 
         FocusEntry();
         return true;
+    }
+
+    private void OpenHistory()
+    {
+        _isHistoryOpen = true;
+        HistoryButton.IsChecked = true;
+        RefreshHistory();
+
+        ((Storyboard)Resources["HistoryExit"]).Stop();
+        var enter = (Storyboard)Resources["HistoryEnter"];
+        ((DoubleAnimation)enter.Children[0]).From = Keypad.ActualHeight;
+        HistoryPane.Visibility = Visibility.Visible;
+        enter.Begin();
+
+        if (History.Entries.Count > 0)
+        {
+            HistoryList.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private bool CloseHistory(bool animate)
+    {
+        if (!_isHistoryOpen)
+        {
+            return false;
+        }
+
+        _isHistoryOpen = false;
+        HistoryButton.IsChecked = false;
+        ((Storyboard)Resources["HistoryEnter"]).Stop();
+        if (animate)
+        {
+            var exit = (Storyboard)Resources["HistoryExit"];
+            ((DoubleAnimation)exit.Children[0]).To = Keypad.ActualHeight;
+            exit.Begin();
+        }
+        else
+        {
+            ((Storyboard)Resources["HistoryExit"]).Stop();
+            HistoryPane.Visibility = Visibility.Collapsed;
+        }
+
+        return true;
+    }
+
+    private void HistoryExit_Completed(object? sender, object e)
+    {
+        // A reopen during the exit animation stops it, but guard in case Completed was already queued.
+        if (!_isHistoryOpen)
+        {
+            HistoryPane.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void RefreshHistory()
+    {
+        // A snapshot: the list only changes while the pane is closed, or through Clear below.
+        HistoryList.ItemsSource = History.Entries.ToArray();
+        bool empty = History.Entries.Count == 0;
+        HistoryEmptyText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        ClearHistoryButton.IsEnabled = !empty;
     }
 
     private bool CloseSettings(bool animate)
@@ -122,6 +190,7 @@ public sealed partial class FlyoutPage : Page, IDisposable
 
             _answer = result.Value;
             _lastExpression = expression.Trim();
+            History.Add(_lastExpression, result.Text);
             SetEntry(result.Text);
             _justEvaluated = true;
 
@@ -349,4 +418,37 @@ public sealed partial class FlyoutPage : Page, IDisposable
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowSettings();
+
+    private void HistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Ctrl+H invokes the button too, so toggle from our state rather than IsChecked.
+        if (_isHistoryOpen)
+        {
+            GoBack();
+        }
+        else
+        {
+            OpenHistory();
+        }
+    }
+
+    private void HistoryList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not HistoryEntry entry)
+        {
+            return;
+        }
+
+        CloseHistory(animate: true);
+        OnUserEdit();
+        SetEntry(entry.Expression);
+        FocusEntry();
+    }
+
+    private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        History.Clear();
+        RefreshHistory();
+        HistoryButton.Focus(FocusState.Programmatic);
+    }
 }
