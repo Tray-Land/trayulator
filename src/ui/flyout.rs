@@ -9,6 +9,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -49,6 +51,7 @@ use crate::{placement, startup, theme, win};
 /// Posted to the owner when the window has closed for good.
 pub const CLOSED_MESSAGE: u32 = WM_APP + 2;
 /// Posted to the flyout with the start-with-Windows state: 0 when unknown, else the state + 1.
+/// LPARAM is the request it answers.
 const STARTUP_MESSAGE: u32 = WM_APP + 3;
 
 const CLASS_NAME: PCWSTR = w!("Trayulator.Flyout");
@@ -91,6 +94,28 @@ struct WindowMotion {
     to_opacity: f32,
 }
 
+/// Where startup workers post their replies: the flyout until it's destroyed, then nowhere, so a
+/// worker that outlives the window can't post to a dead (or reused) handle.
+#[derive(Clone, Default)]
+struct ReplyTarget(Arc<Mutex<Option<isize>>>);
+
+impl ReplyTarget {
+    fn set(&self, hwnd: Option<HWND>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = hwnd.map(|hwnd| hwnd.0 as isize);
+    }
+
+    /// Posts unless the window is gone. The lock is held while posting (which doesn't wait), so
+    /// the window can't be cleared between the check and the post.
+    fn post(&self, msg: u32, wparam: WPARAM, lparam: LPARAM) {
+        let target = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(hwnd) = *target {
+            unsafe {
+                let _ = PostMessageW(Some(HWND(hwnd as *mut _)), msg, wparam, lparam);
+            }
+        }
+    }
+}
+
 pub struct FlyoutWindow {
     me: Weak<FlyoutWindow>,
     hwnd: Cell<HWND>,
@@ -116,6 +141,11 @@ pub struct FlyoutWindow {
     tooltip: RefCell<Option<Rc<Tooltip>>>,
     tooltip_target: Cell<Option<Id>>,
     accessibility: RefCell<Option<IRawElementProviderSimple>>,
+    /// The latest start-with-Windows request; replies to earlier ones are stale.
+    startup_request: Cell<usize>,
+    /// The latest request's worker, which the next one waits for.
+    startup_worker: Cell<Option<JoinHandle<()>>>,
+    startup_reply: ReplyTarget,
 }
 
 impl FlyoutWindow {
@@ -151,6 +181,9 @@ impl FlyoutWindow {
             tooltip: RefCell::new(None),
             tooltip_target: Cell::new(None),
             accessibility: RefCell::new(None),
+            startup_request: Cell::new(0),
+            startup_worker: Cell::new(None),
+            startup_reply: ReplyTarget::default(),
         });
 
         // DWM only draws a system backdrop for windows with a frame, so this one has a sizing
@@ -465,19 +498,21 @@ impl FlyoutWindow {
     }
 
     /// Reads or changes the startup task on a worker thread (the calls block), then posts the
-    /// resulting state back.
+    /// resulting state back. Each worker waits for the one before it, so a read never runs
+    /// alongside a change, and the reply names its request so only the latest one is used.
     fn update_startup(&self, enable: Option<bool>) {
-        let target = self.hwnd.get().0 as isize;
-        std::thread::spawn(move || {
+        let request = self.startup_request.get().wrapping_add(1);
+        self.startup_request.set(request);
+        let reply = self.startup_reply.clone();
+        let worker = spawn_after(self.startup_worker.take(), move || {
             let state = match enable {
                 Some(on) => startup::set_enabled(on),
                 None => startup::state(),
             };
             let code = state.map_or(0, |s| s.0 as usize + 1);
-            unsafe {
-                let _ = PostMessageW(Some(HWND(target as *mut _)), STARTUP_MESSAGE, WPARAM(code), LPARAM(0));
-            }
+            reply.post(STARTUP_MESSAGE, WPARAM(code), LPARAM(request as isize));
         });
+        self.startup_worker.set(Some(worker));
     }
 
     fn update_caret(&self) {
@@ -740,6 +775,11 @@ impl FlyoutWindow {
         }
         self.tooltip.borrow_mut().take();
         self.graphics.borrow_mut().take();
+
+        // Startup workers aren't joined: one can be blocked in a WinRT call, and waiting would
+        // hang the UI thread. With the target cleared, one that finishes later posts nothing, and
+        // at Exit the process ends it.
+        self.startup_reply.set(None);
     }
 }
 
@@ -804,6 +844,7 @@ impl win::WindowProc for FlyoutWindow {
         match msg {
             WM_NCCREATE => {
                 self.hwnd.set(hwnd);
+                self.startup_reply.set(Some(hwnd));
                 None
             }
             // The frame belongs to the client area, and it isn't for resizing.
@@ -904,7 +945,8 @@ impl win::WindowProc for FlyoutWindow {
                 self.invalidate();
                 Some(LRESULT(0))
             }
-            STARTUP_MESSAGE => {
+            // Only the latest request's reply: an earlier one would overwrite a newer state.
+            STARTUP_MESSAGE if lparam.0 as usize == self.startup_request.get() => {
                 let state = wparam.0.checked_sub(1).map(|s| StartupTaskState(s as i32));
                 self.with_page(|page, _, out| page.startup_state(state, out));
                 self.invalidate();
@@ -928,5 +970,41 @@ impl win::WindowProc for FlyoutWindow {
             }
             _ => None,
         }
+    }
+}
+
+/// Runs `work` on a new thread once `previous` has finished, so work started in order runs in
+/// order.
+fn spawn_after(previous: Option<JoinHandle<()>>, work: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        if let Some(previous) = previous {
+            let _ = previous.join();
+        }
+        work();
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn spawn_after_previous_running_waits_for_it() {
+        let (release, released) = mpsc::channel();
+        let (done, finished) = mpsc::channel();
+        let first_done = done.clone();
+        let first = spawn_after(None, move || {
+            let _ = released.recv();
+            let _ = first_done.send(1);
+        });
+        let second = spawn_after(Some(first), move || {
+            let _ = done.send(2);
+        });
+
+        assert!(finished.recv_timeout(Duration::from_millis(100)).is_err());
+        release.send(()).unwrap();
+        second.join().unwrap();
+        assert_eq!(finished.try_iter().collect::<Vec<_>>(), [1, 2]);
     }
 }
