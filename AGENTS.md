@@ -12,10 +12,13 @@ Trayulator is a tray-only Windows calculator written in Rust with [windows-rs](h
 | `src/app.rs` | Single instance, hidden owner window, tray icon events, context menu, exit |
 | `src/tray.rs`, `placement.rs`, `theme.rs` | Notification icon, flyout positioning, taskbar theme |
 | `src/settings.rs`, `startup.rs` | Package LocalSettings, StartupTask (MSIX only) |
+| `src/win.rs`, `clipboard.rs` | Win32 helpers (window classes and procedures, DPI, coordinates), plain-text clipboard |
 | `src/calc/` | Expression engine and history: no Windows dependency |
+| `src/ui/mod.rs` | Types the UI shares: `Rect`, and the element list's `Element`, `Id` and `Role` |
 | `src/ui/flyout.rs` | The popup window: show/hide motion, light-dismiss, idle close, input routing |
 | `src/ui/page.rs` | Calculator and settings content: layout, drawing, input, element list |
-| `src/ui/a11y.rs` | UI Automation providers built from the page's element list |
+| `src/ui/entry.rs`, `anim.rs` | Expression entry editing (text, caret, selection), tweens and easing: no Windows dependency |
+| `src/ui/a11y.rs`, `tooltip.rs` | UI Automation providers built from the page's element list, tooltip popup for help text |
 | `src/ui/graphics.rs`, `widgets.rs`, `palette.rs` | Direct2D/DirectWrite wrapper, WinUI-style controls, Fluent colors |
 | `build.rs` | Embeds icons, `app.manifest` and version info |
 
@@ -23,7 +26,7 @@ Trayulator is a tray-only Windows calculator written in Rust with [windows-rs](h
 
 ```powershell
 cargo build                     # debug build
-cargo test                      # unit tests (engine, history, entry editing, tweens, layout)
+cargo test                      # unit tests (engine, history, entry editing, tweens, page layout/input/toggles, tray messages, taskbar edge)
 cargo clippy --all-targets      # keep this warning-free
 .\run.ps1                       # build, stage, register with package identity, launch (winapp run)
 .\run.ps1 -Clean                # same, from first-run state
