@@ -689,6 +689,11 @@ impl FlyoutWindow {
         unsafe {
             let _ = KillTimer(Some(self.hwnd.get()), TIMER_TOOLTIP);
         }
+        // The pointer can still start the delay during the hide fade, and the tooltip would
+        // outlast the window.
+        if !self.visible.get() {
+            return;
+        }
         let Some(target) = self.tooltip_target.get() else {
             return;
         };
