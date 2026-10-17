@@ -258,6 +258,9 @@ impl win::WindowProc for App {
             tray::CALLBACK_MESSAGE => {
                 match TrayEvent::from_message(wparam.0, lparam.0) {
                     Some(TrayEvent::Select) => self.toggle_flyout(),
+                    // Never a toggle (Enter sends it twice), and no recent-dismiss check: focus was
+                    // already on the taskbar, so this key press didn't dismiss the flyout.
+                    Some(TrayEvent::KeySelect) => self.show_flyout(),
                     Some(TrayEvent::ContextMenu { x, y }) => self.show_menu(x, y),
                     None => {}
                 }

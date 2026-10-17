@@ -219,9 +219,18 @@ impl FlyoutWindow {
         self.show(icon);
     }
 
-    /// Shows the popup next to the tray icon at `icon` (or the cursor), on the calculator.
+    /// Shows the popup next to the tray icon at `icon` (or the cursor), on the calculator. If it's
+    /// already on screen, it's only brought forward as it is: replaying the slide-in would make
+    /// it jump.
     pub fn show(&self, icon: Option<RECT>) {
         let hwnd = self.hwnd.get();
+        if self.visible.get() {
+            unsafe {
+                let _ = SetForegroundWindow(hwnd);
+            }
+            return;
+        }
+
         // Position before showing so the window never flashes at a stale location.
         self.anchor.set(placement::anchor(icon));
         let rect = placement::near_tray(self.anchor.get(), page::WIDTH, page::HEIGHT);

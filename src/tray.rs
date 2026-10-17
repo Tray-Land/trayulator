@@ -15,7 +15,7 @@ use windows::core::PCWSTR;
 
 use crate::{theme, win};
 
-/// Sent to the owner window for clicks on the icon; see `TrayEvent::from_lparam`.
+/// Sent to the owner window for clicks on the icon; see `TrayEvent::from_message`.
 pub const CALLBACK_MESSAGE: u32 = WM_APP + 1;
 
 const ICON_ID: u32 = 1;
@@ -30,19 +30,23 @@ const MAX_TOOLTIP_LENGTH: usize = 127;
 /// What happened to the icon, decoded from a `CALLBACK_MESSAGE` (NOTIFYICON_VERSION_4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayEvent {
-    /// A left click, or Enter/Space while the icon has keyboard focus.
+    /// A left click.
     Select,
+    /// Enter or Space while the icon has keyboard focus. The shell sends this twice for Enter, so
+    /// it can only ever open the flyout, never toggle it.
+    KeySelect,
     /// A right click or the menu key; the point is where to show the menu.
     ContextMenu { x: i32, y: i32 },
 }
 
+const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
+const WM_CONTEXTMENU: u32 = 0x007B;
+
 impl TrayEvent {
     pub fn from_message(wparam: usize, lparam: isize) -> Option<Self> {
-        const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
-        const WM_CONTEXTMENU: u32 = 0x007B;
-
         match u32::from(win::loword(lparam as usize)) {
-            NIN_SELECT | NIN_KEYSELECT => Some(TrayEvent::Select),
+            NIN_SELECT => Some(TrayEvent::Select),
+            NIN_KEYSELECT => Some(TrayEvent::KeySelect),
             WM_CONTEXTMENU => Some(TrayEvent::ContextMenu { x: win::x_param(wparam as isize), y: win::y_param(wparam as isize) }),
             _ => None,
         }
@@ -138,4 +142,43 @@ impl Drop for TrayIcon {
 fn load_icon() -> HICON {
     let id = if theme::is_light() { BLACK_GLYPH } else { WHITE_GLYPH };
     unsafe { LoadIconMetric(Some(win::instance()), PCWSTR(id as *const u16), LIM_SMALL) }.unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A NOTIFYICON_VERSION_4 callback: the event in the low word of LPARAM, the icon ID above
+    /// it, and the anchor point packed in WPARAM.
+    fn message(event: u32, x: i16, y: i16) -> Option<TrayEvent> {
+        let wparam = usize::from(x as u16) | (usize::from(y as u16) << 16);
+        let lparam = ((ICON_ID << 16) | event) as isize;
+        TrayEvent::from_message(wparam, lparam)
+    }
+
+    #[test]
+    fn from_message_click_returns_select() {
+        assert_eq!(message(NIN_SELECT, 10, 20), Some(TrayEvent::Select));
+    }
+
+    #[test]
+    fn from_message_key_select_returns_key_select() {
+        assert_eq!(message(NIN_KEYSELECT, 10, 20), Some(TrayEvent::KeySelect));
+    }
+
+    #[test]
+    fn from_message_context_menu_returns_point() {
+        assert_eq!(message(WM_CONTEXTMENU, 1890, 1050), Some(TrayEvent::ContextMenu { x: 1890, y: 1050 }));
+    }
+
+    #[test]
+    fn from_message_context_menu_left_of_primary_returns_negative_point() {
+        assert_eq!(message(WM_CONTEXTMENU, -300, -20), Some(TrayEvent::ContextMenu { x: -300, y: -20 }));
+    }
+
+    #[test]
+    fn from_message_mouse_move_returns_none() {
+        const WM_MOUSEMOVE: u32 = 0x0200;
+        assert_eq!(message(WM_MOUSEMOVE, 10, 20), None);
+    }
 }
