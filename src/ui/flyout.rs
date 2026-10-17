@@ -7,7 +7,7 @@
 //! return. Methods here never hold a `RefCell` borrow across such calls, and message handlers
 //! use `try_borrow` so a nested message can't panic.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -492,11 +492,7 @@ impl FlyoutWindow {
     fn with_page<R>(&self, f: impl FnOnce(&mut Page, &super::graphics::TextSystem, &mut Vec<Command>) -> R) -> Option<R> {
         let mut commands = Vec::new();
         let (result, focus_before, focus_after) = {
-            let mut graphics = self.graphics.try_borrow_mut().ok()?;
-            if graphics.is_none() {
-                *graphics = Graphics::new().ok();
-            }
-            let graphics = graphics.as_ref()?;
+            let graphics = self.graphics()?;
             let mut page = self.page.try_borrow_mut().ok()?;
             let before = page.focus();
             let result = f(&mut page, &graphics.text, &mut commands);
@@ -517,12 +513,23 @@ impl FlyoutWindow {
     /// Runs `f` against the page and its text system without changing the page, for hit tests and
     /// the element list. `None` when the page is busy (a nested message).
     fn read_page<R>(&self, f: impl FnOnce(&Page, &super::graphics::TextSystem) -> R) -> Option<R> {
+        let graphics = self.graphics()?;
+        let page = self.page.try_borrow().ok()?;
+        Some(f(&page, &graphics.text))
+    }
+
+    /// The window's graphics, created on first use. `None` when they're busy (a nested message)
+    /// or can't be created, and once the window is closed, so a late paint or UI Automation call
+    /// doesn't build them again after `on_destroy` released them.
+    fn graphics(&self) -> Option<RefMut<'_, Graphics>> {
+        if self.closed.get() {
+            return None;
+        }
         let mut graphics = self.graphics.try_borrow_mut().ok()?;
         if graphics.is_none() {
             *graphics = Graphics::new().ok();
         }
-        let page = self.page.try_borrow().ok()?;
-        Some(f(&page, &graphics.as_ref()?.text))
+        RefMut::filter_map(graphics, Option::as_mut).ok()
     }
 
     /// Repaints, restarts the caret blink and keeps any new motion running after input.
@@ -742,11 +749,7 @@ impl FlyoutWindow {
 
         let now = Instant::now();
         let animating = (|| {
-            let mut graphics = self.graphics.try_borrow_mut().ok()?;
-            if graphics.is_none() {
-                *graphics = Graphics::new().ok();
-            }
-            let graphics = graphics.as_mut()?;
+            let mut graphics = self.graphics()?;
             let mut page = self.page.try_borrow_mut().ok()?;
             let palette = self.palette.try_borrow().ok()?;
 
@@ -841,6 +844,9 @@ impl FlyoutWindow {
     }
 
     fn on_destroy(&self, hwnd: HWND) {
+        // Already set when `close` destroyed the window. Set here, before anything is released,
+        // for any other way it's destroyed, so nothing builds the graphics again.
+        self.closed.set(true);
         let root = self.accessibility.borrow_mut().take();
         if let Some(root) = root {
             unsafe {
@@ -1027,7 +1033,6 @@ impl win::WindowProc for FlyoutWindow {
                 Some(LRESULT(0))
             }
             WM_NCDESTROY => {
-                self.closed.set(true);
                 unsafe {
                     let _ = PostMessageW(Some(self.owner), CLOSED_MESSAGE, WPARAM(0), LPARAM(0));
                 }
