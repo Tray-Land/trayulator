@@ -5,7 +5,7 @@
 //! Enter, "=" or the = key replaces the expression with its result, and the equation moves to the
 //! line above, like Windows Calculator. Nothing here runs while the flyout is hidden.
 
-use std::cell::RefCell;
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -153,7 +153,9 @@ fn entry_style(length: usize) -> TextStyle {
     })
 }
 
-/// The calculator's fixed layout.
+/// The calculator's fixed layout. Only the "Copied" badge is measured, so it's built once per
+/// page; see `Page::calculator_layout`.
+#[derive(Clone, Copy)]
 struct CalculatorLayout {
     title: Rect,
     history_button: Rect,
@@ -161,7 +163,8 @@ struct CalculatorLayout {
     settings_button: Rect,
     card: Rect,
     copied: Rect,
-    equation: Rect,
+    /// The line above the entry, for the equation or an error; see `equation`.
+    line: Rect,
     entry: Rect,
     keypad: Rect,
     history_pane: Rect,
@@ -171,7 +174,7 @@ struct CalculatorLayout {
 }
 
 impl CalculatorLayout {
-    fn new(text: &TextSystem, copied: bool) -> Self {
+    fn new(text: &TextSystem) -> Self {
         let header = Rect::new(PADDING, PADDING_TOP, WIDTH - 2.0 * PADDING, HEADER_HEIGHT);
         let settings_button = Rect::new(header.right() - ICON_BUTTON_WIDTH, header.y, ICON_BUTTON_WIDTH, header.h);
         let pin_button = settings_button.offset(-(ICON_BUTTON_WIDTH + 4.0), 0.0);
@@ -183,8 +186,7 @@ impl CalculatorLayout {
         let inner = card.inset(13.0, 9.0, 5.0, 9.0);
         let line = Rect::new(inner.x, inner.y, inner.w - 8.0, EQUATION_HEIGHT);
         let badge_width = 16.0 + text.measure("Copied", TextStyle::CAPTION, f32::MAX, false).0;
-        let copied_rect = Rect::new(line.x, line.y, badge_width, line.h);
-        let equation = if copied { line.inset(badge_width + 8.0, 0.0, 0.0, 0.0) } else { line };
+        let copied = Rect::new(line.x, line.y, badge_width, line.h);
         let entry = Rect::new(inner.x, line.bottom(), inner.w - 8.0, inner.bottom() - line.bottom());
 
         let keypad = keypad_rect();
@@ -198,8 +200,8 @@ impl CalculatorLayout {
             pin_button,
             settings_button,
             card,
-            copied: copied_rect,
-            equation,
+            copied,
+            line,
             entry,
             keypad,
             history_pane: keypad,
@@ -207,6 +209,11 @@ impl CalculatorLayout {
             clear_history,
             history_list: history_list_rect(),
         }
+    }
+
+    /// Where the equation (or error) goes: after the "Copied" badge while it's shown.
+    fn equation(&self, copied: bool) -> Rect {
+        if copied { self.line.inset(self.copied.w + 8.0, 0.0, 0.0, 0.0) } else { self.line }
     }
 
     fn key(&self, key: &Key) -> Rect {
@@ -250,7 +257,8 @@ fn history_list_rect() -> Rect {
     Rect::new(inner.x, top, inner.w, inner.bottom() - top)
 }
 
-/// The settings page's layout, which flows around wrapped descriptions.
+/// The settings page's layout, which flows around wrapped descriptions; see `SettingsState::layout`.
+#[derive(Clone, Copy)]
 struct SettingsLayout {
     back: Rect,
     title: Rect,
@@ -262,6 +270,7 @@ struct SettingsLayout {
 }
 
 /// A setting as a card: a title and a description on the left, a toggle switch on the right.
+#[derive(Clone, Copy)]
 struct SettingCard {
     rect: Rect,
     title: Rect,
@@ -331,9 +340,26 @@ struct SettingsState {
     startup: StartupView,
     version: String,
     motion: Slide,
+    /// The layout and the startup description it was measured with; see `layout`.
+    layout: Cell<Option<(&'static str, SettingsLayout)>>,
 }
 
 impl SettingsState {
+    /// The page's layout. Measuring it creates DirectWrite text layouts, and hit testing reads it
+    /// on every pointer move, so it's kept and measured again only when the startup description
+    /// changes: the other strings are constants or, like `version`, fixed while the page is open.
+    fn layout(&self, text: &TextSystem) -> SettingsLayout {
+        let description = self.startup_description();
+        match self.layout.get() {
+            Some((measured, layout)) if measured == description => layout,
+            _ => {
+                let layout = SettingsLayout::new(text, self);
+                self.layout.set(Some((description, layout)));
+                layout
+            }
+        }
+    }
+
     fn startup_on(&self) -> bool {
         match self.startup {
             StartupView::Known(state) => matches!(state, Some(StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy)),
@@ -424,6 +450,8 @@ pub struct Page {
     history_focus: usize,
     history_motion: Option<HistoryMotion>,
     calculator_motion: Option<Slide>,
+    /// Measured on first use and kept; see `calculator_layout`.
+    calculator_layout: OnceCell<CalculatorLayout>,
     settings: Option<SettingsState>,
     focus: Id,
     /// Draw the focus rectangle: focus last moved by keyboard.
@@ -456,6 +484,7 @@ impl Page {
             history_focus: 0,
             history_motion: None,
             calculator_motion: None,
+            calculator_layout: OnceCell::new(),
             settings: None,
             focus: Id::Entry,
             focus_visible: false,
@@ -538,6 +567,7 @@ impl Page {
             startup: StartupView::Loading,
             version: format!("{DISPLAY_NAME} {}", startup::package_version().as_deref().unwrap_or("(unpackaged)")),
             motion: Slide::enter(PAGE_SLIDE),
+            layout: Cell::new(None),
         });
         // The first setting, not the back button, whose tooltip would pop up on focus.
         self.focus = Id::CopyResultToggle;
@@ -589,6 +619,15 @@ impl Page {
         self.history_motion.is_some_and(|m| !m.is_done(now))
             || self.calculator_motion.is_some_and(|m| !m.is_done(now))
             || self.settings.as_ref().is_some_and(|s| !s.motion.is_done(now))
+    }
+
+    /// The calculator's layout, which paint, hit testing, Tab order, tooltips and UI Automation all
+    /// read. Measuring the badge creates a DirectWrite text layout, and its only inputs are the
+    /// fonts and a constant, so it's measured once. It's plain rectangles: nothing in it holds on
+    /// to the TextSystem that measured it, which `on_destroy` drops before the page, and a new
+    /// one measures the same fonts the same.
+    fn calculator_layout(&self, text: &TextSystem) -> CalculatorLayout {
+        *self.calculator_layout.get_or_init(|| CalculatorLayout::new(text))
     }
 
     /// Everything on screen now, in Tab order.
@@ -685,7 +724,7 @@ impl Page {
 
     /// Mouse wheel over the history list scrolls it; `notches` is positive away from the user.
     pub fn wheel(&mut self, text: &TextSystem, x: f32, y: f32, notches: f32) {
-        let layout = CalculatorLayout::new(text, self.copied);
+        let layout = self.calculator_layout(text);
         if self.history_open && self.settings.is_none() && layout.history_list.contains(x, y) {
             let max = layout.history_max_scroll(self.history.borrow().entries().len());
             self.history_scroll = (self.history_scroll - notches * WHEEL_STEP).clamp(0.0, max);
@@ -809,7 +848,7 @@ impl Page {
     }
 
     fn calculator_elements(&self, text: &TextSystem) -> Vec<Element> {
-        let layout = CalculatorLayout::new(text, self.copied);
+        let layout = self.calculator_layout(text);
         let pin_label = if self.pinned { "Unpin" } else { "Pin open" };
         let mut elements = vec![
             Element::new(Id::Title, layout.title, Role::Text, DISPLAY_NAME),
@@ -830,10 +869,11 @@ impl Page {
         if self.copied {
             elements.push(Element::new(Id::Copied, layout.copied, Role::Text, "Copied"));
         }
+        let equation = layout.equation(self.copied);
         if let Some(error) = &self.error {
-            elements.push(Element::new(Id::Error, layout.equation, Role::Text, error.as_str()));
+            elements.push(Element::new(Id::Error, equation, Role::Text, error.as_str()));
         } else if !self.equation.is_empty() {
-            elements.push(Element::new(Id::Equation, layout.equation, Role::Text, self.equation.as_str()));
+            elements.push(Element::new(Id::Equation, equation, Role::Text, self.equation.as_str()));
         }
         elements.push(Element::new(Id::Entry, layout.entry, Role::Edit, "Expression").automation_id("Entry").focusable());
 
@@ -879,7 +919,7 @@ impl Page {
     }
 
     fn settings_elements(&self, text: &TextSystem, settings: &SettingsState) -> Vec<Element> {
-        let layout = SettingsLayout::new(text, settings);
+        let layout = settings.layout(text);
         vec![
             Element::new(Id::BackButton, layout.back, Role::Button, "Back").help("Back (Esc)").automation_id("BackButton").focusable(),
             Element::new(Id::SettingsTitle, layout.title, Role::Text, "Settings"),
@@ -899,7 +939,7 @@ impl Page {
     }
 
     fn paint_calculator(&mut self, canvas: &mut Canvas, now: Instant) {
-        let layout = CalculatorLayout::new(canvas.text, self.copied);
+        let layout = self.calculator_layout(canvas.text);
         let p = canvas.palette;
 
         canvas.text(DISPLAY_NAME, TextStyle::BODY_STRONG, layout.title, Align::Leading, p.text_primary);
@@ -915,9 +955,10 @@ impl Page {
             let label = layout.copied.inset(16.0, 0.0, 0.0, 0.0);
             canvas.text("Copied", TextStyle::CAPTION, label, Align::Leading, p.text_tertiary);
         }
+        let equation = layout.equation(self.copied);
         match &self.error {
-            Some(error) => canvas.text(error, TextStyle::BODY, layout.equation, Align::Trailing, p.critical),
-            None => canvas.text(&self.equation, TextStyle::BODY, layout.equation, Align::Trailing, p.text_secondary),
+            Some(error) => canvas.text(error, TextStyle::BODY, equation, Align::Trailing, p.critical),
+            None => canvas.text(&self.equation, TextStyle::BODY, equation, Align::Trailing, p.text_secondary),
         }
         self.paint_entry(canvas, layout.entry);
 
@@ -1061,7 +1102,7 @@ impl Page {
         let Some(settings) = &self.settings else {
             return;
         };
-        let layout = SettingsLayout::new(canvas.text, settings);
+        let layout = settings.layout(canvas.text);
         let p = canvas.palette;
 
         self.icon_button(canvas, Id::BackButton, layout.back, BACK_GLYPH, None, true);
@@ -1550,5 +1591,41 @@ mod tests {
         page.startup_state(Some(StartupTaskState::Enabled), &mut out);
         assert!(out.is_empty());
         assert_eq!(toggle_state(&page, Id::StartupToggle), Some(true));
+    }
+
+    fn element_rect(page: &Page, text: &TextSystem, id: Id) -> Option<Rect> {
+        page.elements(text).into_iter().find(|e| e.id == id).map(|e| e.rect)
+    }
+
+    #[test]
+    fn elements_copied_toggled_moves_equation() {
+        let text = TextSystem::new().unwrap();
+        let mut page = evaluated_page();
+        let full = element_rect(&page, &text, Id::Equation).unwrap();
+        assert_eq!(element_rect(&page, &text, Id::Copied), None);
+
+        page.copied = true;
+        let badge = element_rect(&page, &text, Id::Copied).unwrap();
+        let equation = element_rect(&page, &text, Id::Equation).unwrap();
+        assert!(equation.x > badge.right() && equation.w < full.w);
+
+        page.copied = false;
+        assert_eq!(element_rect(&page, &text, Id::Equation), Some(full));
+    }
+
+    #[test]
+    fn elements_startup_description_changed_measures_again() {
+        let text = TextSystem::new().unwrap();
+        let mut page = settings_page();
+        // A one-line description, then a two-line one: the startup card grows, pushing the version
+        // down.
+        page.startup_state(Some(StartupTaskState::DisabledByPolicy), &mut Vec::new());
+        let short = element_rect(&page, &text, Id::Version).unwrap();
+
+        page.startup_state(Some(StartupTaskState::DisabledByUser), &mut Vec::new());
+        let long = element_rect(&page, &text, Id::Version).unwrap();
+        assert!(long.y > short.y);
+        let fresh = SettingsLayout::new(&text, page.settings.as_ref().unwrap());
+        assert_eq!(long, fresh.version);
     }
 }

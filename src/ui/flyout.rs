@@ -514,6 +514,17 @@ impl FlyoutWindow {
         Some(result)
     }
 
+    /// Runs `f` against the page and its text system without changing the page, for hit tests and
+    /// the element list. `None` when the page is busy (a nested message).
+    fn read_page<R>(&self, f: impl FnOnce(&Page, &super::graphics::TextSystem) -> R) -> Option<R> {
+        let mut graphics = self.graphics.try_borrow_mut().ok()?;
+        if graphics.is_none() {
+            *graphics = Graphics::new().ok();
+        }
+        let page = self.page.try_borrow().ok()?;
+        Some(f(&page, &graphics.as_ref()?.text))
+    }
+
     /// Repaints, restarts the caret blink and keeps any new motion running after input.
     fn after_input(&self) {
         if let Ok(mut page) = self.page.try_borrow_mut() {
@@ -660,7 +671,7 @@ impl FlyoutWindow {
             let _ = ScreenToClient(self.hwnd.get(), &mut point);
         }
         let (x, y) = self.to_dips(point.x, point.y);
-        let over_entry = self.with_page(|page, text, _| page.hit(text, x, y).is_some_and(|e| e.id == Id::Entry));
+        let over_entry = self.read_page(|page, text| page.hit(text, x, y).is_some_and(|e| e.id == Id::Entry));
         let cursor = if over_entry == Some(true) { IDC_IBEAM } else { IDC_ARROW };
         unsafe {
             if let Ok(cursor) = LoadCursorW(None, cursor) {
@@ -853,12 +864,7 @@ impl Host for FlyoutWindow {
     }
 
     fn elements(&self) -> Option<Vec<Element>> {
-        let mut graphics = self.graphics.try_borrow_mut().ok()?;
-        if graphics.is_none() {
-            *graphics = Graphics::new().ok();
-        }
-        let page = self.page.try_borrow().ok()?;
-        Some(page.elements(&graphics.as_ref()?.text))
+        self.read_page(|page, text| page.elements(text))
     }
 
     fn focused(&self) -> Option<Id> {
