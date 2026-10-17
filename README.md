@@ -24,7 +24,9 @@ A small calculator that lives in the Windows notification area. Click the tray i
 | `( )` | Grouping |
 | `pi` or `π`, `e` | Constants. `2π` works too |
 | `ans` | The previous result |
-| `sqrt(x)`, `abs(x)`, `round(x, n)`, `pow(x, y)`, `max(a, b)`, `min(a, b)`, `log(x, base)`, `sin(x)`… | [NCalc built-in functions](https://github.com/ncalc/ncalc), case-insensitive |
+| `sqrt(x)`, `abs(x)`, `round(x, n)`, `pow(x, y)`, `max(a, b)`, `min(a, b)`, `log(x, base)`, `ln(x)`, `log10(x)`, `exp(x)` | Functions, case-insensitive |
+| `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)` | Trigonometry, in radians |
+| `floor`, `ceiling`, `truncate`, `sign`, `ieeeremainder(x, y)` | Rounding and signs |
 
 Numbers use `.` for decimals and `,` between function arguments. Results are shown to 15 significant digits, so `0.1+0.2` is `0.3`. Whole numbers that overflow switch to floating point instead of wrapping around.
 
@@ -34,22 +36,29 @@ Numbers use `.` for decimals and `,` between function arguments. Results are sho
 |---|---|
 | Enter or `=` | Evaluate |
 | Up | Recall the last equation |
-| Escape | Leave settings, or hide the flyout |
+| Ctrl+H | Show or hide history |
+| Escape | Leave settings or history, or hide the flyout |
+| Alt+Left or the mouse's back button | Leave settings or history |
 
 ## Build and run
 
-Requires Windows 10 1809 or later, the [.NET 10 SDK](https://dotnet.microsoft.com/download), and the [winapp CLI](https://github.com/microsoft/winappCli).
+Runs on Windows 10 1809 or later, x64 or ARM64. The acrylic backdrop needs Windows 11 22H2; earlier versions get a solid background.
+
+Building needs [Rust](https://rustup.rs) with the MSVC toolchain (Visual Studio's C++ build tools for your architecture) and the [winapp CLI](https://github.com/microsoft/winappCli) (`winget install Microsoft.WinAppCli`).
 
 ```powershell
-winapp run            # build, register with package identity, and launch
-winapp run --clean    # same, starting from first-run state
-dotnet test tests/Trayulator.Tests
+.\run.ps1            # build, register with package identity, and launch
+.\run.ps1 -Clean     # same, starting from first-run state
+cargo test           # engine, history and editing tests
 ```
+
+`cargo run` also works, but unpackaged: settings don't persist and **Start with Windows** is unavailable.
 
 Right-click the tray icon for **Settings** and **Exit**.
 
 ## How it's built
 
-- WinUI 3 and the Windows App SDK, with [WinUIEx](https://github.com/dotMorten/WinUIEx) for the tray icon.
-- Expressions are evaluated by [NCalcAsync](https://github.com/ncalc/ncalc) in `Core/CalculatorEngine.cs`. It has no WinRT dependency, so the test project compiles it directly.
-- The flyout (`Views/TrayFlyoutWindow`) hides when dismissed, so reopening it is instant. After a minute hidden it closes completely and gives its memory back.
+- Rust and [windows-rs](https://github.com/microsoft/windows-rs): a Win32 tray icon and one popup window, drawn with Direct2D and DirectWrite over the shell's acrylic backdrop and styled after the WinUI controls. UI Automation providers expose every control to Narrator.
+- Expressions are parsed and evaluated in `src/calc/engine.rs`, which has no Windows dependency. Whole numbers stay exact until they overflow; division and powers are real.
+- The flyout (`src/ui/flyout.rs`) hides when dismissed, so reopening it is instant. After a minute hidden it closes completely, and the idle app drops to about 1 MB of working set.
+- Settings live in the package's LocalSettings and the history in memory, so the history lasts until you exit.
