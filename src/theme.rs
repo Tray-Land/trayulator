@@ -26,10 +26,14 @@ pub fn is_theme_change(lparam: LPARAM) -> bool {
     !name.is_null() && unsafe { name.to_string() }.is_ok_and(|n| n == "ImmersiveColorSet")
 }
 
-/// A shade of the user's accent color as 0xRRGGBB, or `None` when it can't be read.
-pub fn accent(shade: UIColorType) -> Option<u32> {
-    let color = UISettings::new().and_then(|settings| settings.GetColorValue(shade)).ok()?;
-    Some(u32::from(color.R) << 16 | u32::from(color.G) << 8 | u32::from(color.B))
+/// Shades of the user's accent color as 0xRRGGBB, each `None` when it can't be read. One
+/// UISettings serves them all.
+pub fn accents<const N: usize>(shades: [UIColorType; N]) -> [Option<u32>; N] {
+    let settings = UISettings::new().ok();
+    shades.map(|shade| {
+        let color = settings.as_ref()?.GetColorValue(shade).ok()?;
+        Some(u32::from(color.R) << 16 | u32::from(color.G) << 8 | u32::from(color.B))
+    })
 }
 
 /// Makes classic popup menus (the tray menu) follow the taskbar theme. Windows has no documented

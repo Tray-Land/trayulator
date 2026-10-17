@@ -46,11 +46,13 @@ pub struct Accents {
 impl Accents {
     /// Reads the accent shades, falling back to the Windows default blue.
     pub fn read() -> Self {
+        let [accent, dark1, dark2, light2] =
+            theme::accents([UIColorType::Accent, UIColorType::AccentDark1, UIColorType::AccentDark2, UIColorType::AccentLight2]);
         Self {
-            accent: theme::accent(UIColorType::Accent).unwrap_or(0x0078D4),
-            dark1: theme::accent(UIColorType::AccentDark1).unwrap_or(0x005FB8),
-            dark2: theme::accent(UIColorType::AccentDark2).unwrap_or(0x003E92),
-            light2: theme::accent(UIColorType::AccentLight2).unwrap_or(0x60CDFF),
+            accent: accent.unwrap_or(0x0078D4),
+            dark1: dark1.unwrap_or(0x005FB8),
+            dark2: dark2.unwrap_or(0x003E92),
+            light2: light2.unwrap_or(0x60CDFF),
         }
     }
 }
