@@ -133,6 +133,8 @@ pub struct FlyoutWindow {
     allow_close: Cell<bool>,
     closed: Cell<bool>,
     last_dismissed: Cell<Option<Instant>>,
+    /// Where the window was last opened from, to place it again if its DPI changes on screen.
+    anchor: Cell<POINT>,
     base: Cell<(i32, i32)>,
     frame: Cell<(i32, f32)>,
     motion: Cell<Option<WindowMotion>>,
@@ -173,6 +175,7 @@ impl FlyoutWindow {
             allow_close: Cell::new(false),
             closed: Cell::new(false),
             last_dismissed: Cell::new(None),
+            anchor: Cell::new(POINT::default()),
             base: Cell::new((0, 0)),
             frame: Cell::new((0, 0.0)),
             motion: Cell::new(None),
@@ -217,7 +220,8 @@ impl FlyoutWindow {
     pub fn show(&self, icon: Option<RECT>) {
         let hwnd = self.hwnd.get();
         // Position before showing so the window never flashes at a stale location.
-        let rect = placement::near_tray(icon, page::WIDTH, page::HEIGHT);
+        self.anchor.set(placement::anchor(icon));
+        let rect = placement::near_tray(self.anchor.get(), page::WIDTH, page::HEIGHT);
         self.base.set((rect.left, rect.top));
         unsafe {
             let _ = KillTimer(Some(hwnd), TIMER_HIDE);
@@ -722,6 +726,29 @@ impl FlyoutWindow {
         }
     }
 
+    /// The window moved to a monitor with another scale, or its monitor's scale changed. The page
+    /// is a fixed size in DIPs, so the size follows from `dpi` alone; Windows' suggested size is
+    /// no use, since when `show` places the window on another monitor it's already sized for that
+    /// monitor, and the suggestion scales it a second time. On screen, the flyout goes back
+    /// against the tray at its new size: keeping its top-left would leave it overlapping the
+    /// taskbar or floating above it. Drawing picks up the new DPI on the next paint.
+    fn on_dpi_changed(&self, dpi: u32) {
+        let hwnd = self.hwnd.get();
+        unsafe {
+            if self.visible.get() {
+                let rect = placement::near_tray(self.anchor.get(), page::WIDTH, page::HEIGHT);
+                self.base.set((rect.left, rect.top));
+                let (offset, _) = self.frame.get();
+                let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+                let _ = SetWindowPos(hwnd, None, rect.left, rect.top + offset, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+            } else {
+                let (width, height) = (win::to_physical(page::WIDTH, dpi), win::to_physical(page::HEIGHT, dpi));
+                let _ = SetWindowPos(hwnd, None, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+            }
+        }
+        self.invalidate();
+    }
+
     fn scale(&self, logical: f32) -> i32 {
         (logical * win::window_dpi(self.hwnd.get()) as f32 / win::BASE_DPI as f32).round() as i32
     }
@@ -936,13 +963,8 @@ impl win::WindowProc for FlyoutWindow {
                 None
             }
             WM_DPICHANGED => {
-                // Keep the physical position but take the size the new DPI calls for.
-                let suggested = unsafe { &*(lparam.0 as *const RECT) };
-                unsafe {
-                    let (width, height) = (suggested.right - suggested.left, suggested.bottom - suggested.top);
-                    let _ = SetWindowPos(hwnd, None, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
-                }
-                self.invalidate();
+                // X and Y DPI are always the same.
+                self.on_dpi_changed(u32::from(win::loword(wparam.0)));
                 Some(LRESULT(0))
             }
             // Only the latest request's reply: an earlier one would overwrite a newer state.

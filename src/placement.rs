@@ -36,10 +36,10 @@ pub fn taskbar() -> Option<(RECT, Edge)> {
     Some((data.rc, edge))
 }
 
-/// The physical rectangle for a popup of `width` × `height` logical pixels next to the tray icon
-/// at `icon`, or next to the cursor when the icon's position is unknown (it's in the overflow).
-pub fn near_tray(icon: Option<RECT>, width: f32, height: f32) -> RECT {
-    let anchor = match icon {
+/// The point a popup opens from: the middle of the tray icon at `icon`, or the cursor when the
+/// icon's position is unknown (it's in the overflow).
+pub fn anchor(icon: Option<RECT>) -> POINT {
+    match icon {
         Some(r) => POINT { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 },
         None => {
             let mut cursor = POINT::default();
@@ -48,8 +48,12 @@ pub fn near_tray(icon: Option<RECT>, width: f32, height: f32) -> RECT {
             }
             cursor
         }
-    };
+    }
+}
 
+/// The physical rectangle for a popup of `width` × `height` logical pixels next to the tray at
+/// `anchor`, sized for that monitor's DPI.
+pub fn near_tray(anchor: POINT, width: f32, height: f32) -> RECT {
     let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
     unsafe {
         let _ = GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY), &mut info);
