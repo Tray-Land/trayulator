@@ -707,15 +707,7 @@ impl Page {
             self.evaluate(out);
             return;
         }
-
-        // Typing a number right after a result replaces the result instead of appending to it.
-        let at_end = !self.entry.has_selection() && self.entry.caret() == self.entry.len();
-        if self.just_evaluated && at_end && starts_new_expression(c) {
-            self.entry.set_text("", None);
-        }
-        self.on_user_edit();
-        self.entry.insert(c.encode_utf8(&mut [0; 4]));
-        self.reveal_caret = true;
+        self.insert(c.encode_utf8(&mut [0; 4]));
     }
 
     /// Clicks, Enter and Space on a focused control, and UI Automation's Invoke and Toggle.
@@ -1177,13 +1169,17 @@ impl Page {
         }
     }
 
-    /// Inserts at the caret, replacing any selection, the way typing would.
+    /// Inserts at the caret, replacing any selection, for typing and the keypad alike. Right after
+    /// a result, a number entered at its end replaces it instead of appending to it; entered
+    /// anywhere else, it edits the result.
     fn insert(&mut self, value: &str) {
-        if self.just_evaluated && value.starts_with(starts_new_expression) {
+        let at_end = !self.entry.has_selection() && self.entry.caret() == self.entry.len();
+        if self.just_evaluated && at_end && value.starts_with(starts_new_expression) {
             self.entry.set_text("", None);
         }
         self.on_user_edit();
         self.entry.insert(value);
+        self.reveal_caret = true;
     }
 
     /// Pasted text: line breaks go, and an "=" in it evaluates, as typing one does.
@@ -1467,6 +1463,73 @@ mod tests {
         page.startup_state(Some(StartupTaskState::DisabledByUser), &mut out);
         assert_eq!(out, [Command::Toggled { id: Id::StartupToggle, on: false }]);
         assert_eq!(toggle_state(&page, Id::StartupToggle), Some(false));
+    }
+
+    /// A page showing the result of 12+3, caret at the end.
+    fn evaluated_page() -> Page {
+        let mut page = page();
+        for c in "12+3=".chars() {
+            page.char_input(c, &mut Vec::new());
+        }
+        assert_eq!(page.entry_text(), "15");
+        page
+    }
+
+    fn press(page: &mut Page, label: &str) {
+        let index = KEYS.iter().position(|key| key.label == label).unwrap();
+        page.activate(Id::Key(index as u8), &mut Vec::new());
+    }
+
+    #[test]
+    fn char_input_number_after_result_starts_over() {
+        let mut page = evaluated_page();
+        page.char_input('0', &mut Vec::new());
+        assert_eq!(page.entry_text(), "0");
+    }
+
+    #[test]
+    fn char_input_number_inside_result_edits_it() {
+        let mut page = evaluated_page();
+        page.entry.set_caret(1, false);
+        page.char_input('0', &mut Vec::new());
+        assert_eq!(page.entry_text(), "105");
+    }
+
+    #[test]
+    fn char_input_operator_after_result_continues() {
+        let mut page = evaluated_page();
+        page.char_input('+', &mut Vec::new());
+        assert_eq!(page.entry_text(), "15+");
+    }
+
+    #[test]
+    fn activate_digit_key_after_result_starts_over() {
+        let mut page = evaluated_page();
+        press(&mut page, "0");
+        assert_eq!(page.entry_text(), "0");
+    }
+
+    #[test]
+    fn activate_digit_key_inside_result_edits_it() {
+        let mut page = evaluated_page();
+        page.entry.set_caret(1, false);
+        press(&mut page, "0");
+        assert_eq!(page.entry_text(), "105");
+    }
+
+    #[test]
+    fn activate_function_key_inside_result_edits_it() {
+        let mut page = evaluated_page();
+        page.entry.set_caret(0, false);
+        press(&mut page, "√x");
+        assert_eq!(page.entry_text(), "sqrt(15");
+    }
+
+    #[test]
+    fn activate_operator_key_after_result_continues() {
+        let mut page = evaluated_page();
+        press(&mut page, "×");
+        assert_eq!(page.entry_text(), "15×");
     }
 
     #[test]
