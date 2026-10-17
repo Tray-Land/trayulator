@@ -53,3 +53,6 @@ _ReSharper*/
 Generated\ Files/
 *_wpftmp.csproj
 
+
+## Rust
+/target/
