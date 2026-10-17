@@ -194,6 +194,8 @@ impl App {
         let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
             return;
         };
+        // An open flyout stays up behind the menu; one that isn't open isn't built for it.
+        let flyout = self.flyout.borrow().clone().filter(|f| !f.is_closed());
 
         let open = HSTRING::from(format!("Open {DISPLAY_NAME}"));
         let command = unsafe {
@@ -205,12 +207,18 @@ impl App {
             theme::set_menu_theme(!theme::is_light());
 
             // The menu only closes on an outside click when its owner is the foreground window.
+            if let Some(flyout) = &flyout {
+                flyout.set_menu_open(true);
+            }
             let _ = SetForegroundWindow(hwnd);
             let command = TrackPopupMenuEx(menu, menu_alignment() | (TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON).0, x, y, hwnd, None);
             let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
             let _ = DestroyMenu(menu);
             command.0 as usize
         };
+        if let Some(flyout) = &flyout {
+            flyout.set_menu_open(false);
+        }
 
         match command {
             MENU_OPEN => self.show_flyout(),

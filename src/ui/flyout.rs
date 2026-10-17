@@ -26,7 +26,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_H, VK_LEFT, VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, DestroyWindow, GA_ROOT, GetAncestor, GetCaretBlinkTime, GetClassNameW, GetCursorPos, GetForegroundWindow,
+    DefWindowProcW, DestroyWindow, GA_ROOT, GetAncestor, GetCaretBlinkTime, GetCursorPos, GetForegroundWindow,
     HTCLIENT, HWND_TOPMOST, IDC_ARROW, IDC_IBEAM, KillTimer, LWA_ALPHA, LoadCursorW, PostMessageW, SW_HIDE, SW_SHOW,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetCursor, SetForegroundWindow, SetLayeredWindowAttributes,
     SetTimer, SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_APP, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
@@ -133,6 +133,8 @@ pub struct FlyoutWindow {
     allow_close: Cell<bool>,
     closed: Cell<bool>,
     last_dismissed: Cell<Option<Instant>>,
+    /// The tray menu is open; see `set_menu_open`.
+    menu_open: Cell<bool>,
     /// Where the window was last opened from, to place it again if its DPI changes on screen.
     anchor: Cell<POINT>,
     base: Cell<(i32, i32)>,
@@ -175,6 +177,7 @@ impl FlyoutWindow {
             allow_close: Cell::new(false),
             closed: Cell::new(false),
             last_dismissed: Cell::new(None),
+            menu_open: Cell::new(false),
             anchor: Cell::new(POINT::default()),
             base: Cell::new((0, 0)),
             frame: Cell::new((0, 0.0)),
@@ -260,6 +263,20 @@ impl FlyoutWindow {
     pub fn show_settings(&self) {
         self.with_page(|page, _, out| page.show_settings(out));
         self.after_input();
+    }
+
+    /// The tray icon's menu opened or closed. The menu needs the app's hidden window (`owner`)
+    /// in the foreground to close on an outside click, so while it's open the flyout not having
+    /// the foreground isn't a dismissal. Once it closes, nothing else would check again (the
+    /// flyout was already inactive, so no WM_ACTIVATE follows), so the check runs after the
+    /// usual debounce, by when a click that closed the menu has activated what it landed on.
+    pub fn set_menu_open(&self, open: bool) {
+        self.menu_open.set(open);
+        if !open && self.visible.get() {
+            unsafe {
+                SetTimer(Some(self.hwnd.get()), TIMER_HIDE, HIDE_DEBOUNCE_MS, None);
+            }
+        }
     }
 
     pub fn hide(&self) {
@@ -427,32 +444,37 @@ impl FlyoutWindow {
     }
 
     fn hide_if_focus_left(&self) {
+        let hwnd = self.hwnd.get();
         unsafe {
-            let _ = KillTimer(Some(self.hwnd.get()), TIMER_HIDE);
+            let _ = KillTimer(Some(hwnd), TIMER_HIDE);
+        }
+        // `set_menu_open` checks again when the tray menu closes.
+        if !self.visible.get() || self.menu_open.get() {
+            return;
         }
 
         // Pinned: stay on screen (always on top) until hidden explicitly with Escape or the tray icon.
-        if self.page.try_borrow().is_ok_and(|page| page.is_pinned()) {
+        let pinned = self.page.try_borrow().is_ok_and(|page| page.is_pinned());
+        let foreground = unsafe { GetForegroundWindow() };
+        if foreground == self.owner {
+            // The tray menu closed without a command (Escape) and left the foreground on the
+            // hidden window, where typing goes nowhere. An unpinned flyout was in use just before
+            // the menu opened, so it gets the foreground back.
+            if !pinned {
+                unsafe {
+                    let _ = SetForegroundWindow(hwnd);
+                }
+            }
             return;
         }
-        if self.visible.get() && !self.should_remain_visible(unsafe { GetForegroundWindow() }) {
+        if !pinned && !self.should_remain_visible(foreground) {
             self.hide();
         }
     }
 
     fn should_remain_visible(&self, foreground: HWND) -> bool {
         let hwnd = self.hwnd.get();
-        if foreground.is_invalid() {
-            return false;
-        }
-        if foreground == hwnd || unsafe { GetAncestor(foreground, GA_ROOT) } == hwnd {
-            return true;
-        }
-
-        // A classic menu (#32768) opening, such as the tray icon's.
-        let mut class = [0u16; 64];
-        let length = unsafe { GetClassNameW(foreground, &mut class) } as usize;
-        String::from_utf16_lossy(&class[..length]) == "#32768"
+        !foreground.is_invalid() && (foreground == hwnd || unsafe { GetAncestor(foreground, GA_ROOT) } == hwnd)
     }
 
     /// Runs `f` against the page and its text system, then carries out the commands it issued
