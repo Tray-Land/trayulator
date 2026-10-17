@@ -54,6 +54,8 @@ cargo test           # engine, history and editing tests
 
 `cargo run` also works, but unpackaged: settings don't persist and **Start with Windows** is unavailable.
 
+`.\build-msix-for-gh.ps1` builds signed x64 and ARM64 MSIX packages into `AppPackages\GitHub` and drafts a GitHub release with them (`-SkipRelease` stops after signing). It needs both Rust targets (`rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc`) and the maintainer's `sign-msix` PowerShell function. The release tag comes from the version in `Package.appxmanifest`, which must match `Cargo.toml`.
+
 Right-click the tray icon for **Settings** and **Exit**.
 
 ## How it's built

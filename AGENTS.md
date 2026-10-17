@@ -31,6 +31,7 @@ cargo clippy --all-targets      # keep this warning-free
 .\run.ps1                       # build, stage, register with package identity, launch (winapp run)
 .\run.ps1 -Clean                # same, from first-run state
 .\run.ps1 -Release              # release profile
+.\build-msix-for-gh.ps1         # signed x64 + arm64 MSIX and a draft GitHub release (maintainer only)
 ```
 
 `cargo run` launches unpackaged: settings don't persist and the startup task is unavailable. Use `.\run.ps1` to verify anything that depends on package identity.
