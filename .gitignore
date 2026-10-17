@@ -1,55 +1,19 @@
-## .NET / Visual Studio
-[Bb]in/
-[Oo]bj/
-[Dd]ebug/
-[Rr]elease/
-.vs/
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
-artifacts/
+# Cargo build output, including run.ps1's staged package layouts
+/target/
 
-# Build logs
-[Ll]og/
-[Ll]ogs/
-*.log
-*.binlog
-
-# Test results
-[Tt]est[Rr]esult*/
-*.trx
-*.coverage
-*.coveragexml
-
-# NuGet
-*.nupkg
-*.snupkg
-*.nuget.props
-*.nuget.targets
-project.lock.json
-
-# MSIX packaging output
+# MSIX packaging output and signing certificates
 AppPackages/
-BundleArtifacts/
 *.msix
+*.msixbundle
 *.msixupload
 *.appx
 *.appxbundle
-*.appxupload
+*.pfx
 
-# Publish output
-publish/
-*.pubxml
-PublishScripts/
+# Logs
+*.log
 
-# Code analysis and tooling
-_ReSharper*/
-*.DotSettings.user
-*.dotCover
+# Editors
+.vs/
+.vscode/
 .idea/
-
-# Generated files
-Generated\ Files/
-*_wpftmp.csproj
-
