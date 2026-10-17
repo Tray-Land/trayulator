@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use windows::ApplicationModel::StartupTaskState;
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::DirectWrite::{DWRITE_HIT_TEST_METRICS, IDWriteTextLayout};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY, VK_A, VK_BACK, VK_C, VK_DELETE, VK_DOWN, VK_END, VK_HOME, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_UP,
@@ -404,6 +405,8 @@ struct EntryView {
 
 pub struct Page {
     history: Rc<RefCell<CalculationHistory>>,
+    /// The window that copies are made on behalf of; see `set_clipboard_owner`.
+    clipboard_owner: HWND,
     entry: TextEntry,
     /// How far the text is scrolled right of its end-aligned position when it overflows.
     entry_scroll: f32,
@@ -436,6 +439,7 @@ impl Page {
     pub fn new(history: Rc<RefCell<CalculationHistory>>) -> Self {
         Self {
             history,
+            clipboard_owner: HWND::default(),
             entry: TextEntry::default(),
             entry_scroll: 0.0,
             reveal_caret: true,
@@ -461,6 +465,12 @@ impl Page {
             caret_on: true,
             active: false,
         }
+    }
+
+    /// The window showing the page, set once it exists: the clipboard needs an owner for a copy
+    /// to take.
+    pub fn set_clipboard_owner(&mut self, hwnd: HWND) {
+        self.clipboard_owner = hwnd;
     }
 
     pub fn focus(&self) -> Id {
@@ -1114,11 +1124,11 @@ impl Page {
             VK_A if ctrl => self.entry.select_all(),
             VK_C if ctrl => {
                 if self.entry.has_selection() {
-                    clipboard::set_text(&self.entry.selected_text());
+                    clipboard::set_text(self.clipboard_owner, &self.entry.selected_text());
                 }
             }
             VK_X if ctrl => {
-                if self.entry.has_selection() && clipboard::set_text(&self.entry.selected_text()) {
+                if self.entry.has_selection() && clipboard::set_text(self.clipboard_owner, &self.entry.selected_text()) {
                     self.entry.insert("");
                     self.on_user_edit();
                 }
@@ -1212,7 +1222,7 @@ impl Page {
                 self.just_evaluated = true;
                 self.error = None;
                 self.equation = format!("{expression} =");
-                self.copied = settings::copy_result_on_evaluate() && clipboard::set_text(&answer.text);
+                self.copied = settings::copy_result_on_evaluate() && clipboard::set_text(self.clipboard_owner, &answer.text);
                 out.push(Command::SetTrayStatus(format!("{expression} = {}", answer.text)));
                 self.last_expression = Some(expression);
             }

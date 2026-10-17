@@ -199,6 +199,7 @@ impl FlyoutWindow {
         let ex_style = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED;
         let title = windows::core::HSTRING::from(DISPLAY_NAME);
         let hwnd = win::create_window(&this, CLASS_NAME, PCWSTR(title.as_ptr()), style, ex_style, RECT::default(), None)?;
+        this.page.borrow_mut().set_clipboard_owner(hwnd);
         this.configure_chrome(hwnd);
         Ok(this)
     }
