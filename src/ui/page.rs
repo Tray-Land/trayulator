@@ -62,6 +62,8 @@ pub enum Command {
     /// Read the start-with-Windows state (off the UI thread) and pass it to `startup_state`.
     QueryStartup,
     SetStartup(bool),
+    /// A toggle button or switch flipped to `on`, for UI Automation clients (Narrator) to hear.
+    Toggled { id: Id, on: bool },
 }
 
 #[derive(Clone, Copy)]
@@ -533,10 +535,12 @@ impl Page {
     }
 
     /// Returns from settings or history to the calculator; false when already there.
-    pub fn go_back(&mut self) -> bool {
+    pub fn go_back(&mut self, out: &mut Vec<Command>) -> bool {
         if self.settings.take().is_some() {
             self.calculator_motion = Some(Slide::enter(-PAGE_SLIDE));
-        } else if !self.close_history(true) {
+        } else if self.close_history(true) {
+            out.push(Command::Toggled { id: Id::HistoryButton, on: false });
+        } else {
             return false;
         }
 
@@ -544,22 +548,30 @@ impl Page {
         true
     }
 
-    pub fn toggle_history(&mut self) {
+    pub fn toggle_history(&mut self, out: &mut Vec<Command>) {
         if self.settings.is_some() {
             return;
         }
         // Ctrl+H invokes the button too, so toggle from our state.
         if self.history_open {
-            self.go_back();
+            self.go_back(out);
         } else {
             self.open_history();
+            out.push(Command::Toggled { id: Id::HistoryButton, on: true });
         }
     }
 
-    /// The start-with-Windows state arrived from Windows.
-    pub fn startup_state(&mut self, state: Option<StartupTaskState>) {
+    /// The start-with-Windows state arrived from Windows. The switch flipped, and was announced,
+    /// when the user asked; it's announced again only if Windows settled on something else. The
+    /// first state after opening settings isn't a flip.
+    pub fn startup_state(&mut self, state: Option<StartupTaskState>, out: &mut Vec<Command>) {
         if let Some(settings) = &mut self.settings {
+            let before = (settings.startup != StartupView::Loading).then(|| settings.startup_on());
             settings.startup = StartupView::Known(state);
+            let on = settings.startup_on();
+            if before.is_some_and(|before| before != on) {
+                out.push(Command::Toggled { id: Id::StartupToggle, on });
+            }
         }
     }
 
@@ -709,10 +721,11 @@ impl Page {
     /// Clicks, Enter and Space on a focused control, and UI Automation's Invoke and Toggle.
     pub fn activate(&mut self, id: Id, out: &mut Vec<Command>) {
         match id {
-            Id::HistoryButton => self.toggle_history(),
+            Id::HistoryButton => self.toggle_history(out),
             Id::PinButton => {
                 self.pinned = !self.pinned;
                 settings::set_is_pinned(self.pinned);
+                out.push(Command::Toggled { id, on: self.pinned });
                 self.focus_entry();
             }
             Id::SettingsButton => self.show_settings(out),
@@ -726,25 +739,31 @@ impl Page {
             Id::HistoryItem(index) => {
                 let expression = self.history.borrow().entries().get(usize::from(index)).map(|e| e.expression.clone());
                 if let Some(expression) = expression {
-                    self.close_history(true);
+                    if self.close_history(true) {
+                        out.push(Command::Toggled { id: Id::HistoryButton, on: false });
+                    }
                     self.on_user_edit();
                     self.set_entry(&expression);
                     self.focus_entry();
                 }
             }
             Id::BackButton => {
-                self.go_back();
+                self.go_back(out);
             }
             Id::CopyResultToggle => {
                 if let Some(settings) = &mut self.settings {
                     settings.copy_result = !settings.copy_result;
                     settings::set_copy_result_on_evaluate(settings.copy_result);
+                    out.push(Command::Toggled { id, on: settings.copy_result });
                 }
             }
             Id::StartupToggle => {
                 if let Some(settings) = self.settings.as_mut().filter(|s| s.startup_enabled()) {
+                    // The switch shows the new state while Windows applies it, so announce it now,
+                    // in reply to the key press; `startup_state` corrects it if Windows says no.
                     let on = !settings.startup_on();
                     settings.startup = StartupView::Changing(on);
+                    out.push(Command::Toggled { id, on });
                     out.push(Command::SetStartup(on));
                 }
             }
@@ -1333,5 +1352,130 @@ mod tests {
             }
         }
         assert!(cells.iter().flatten().all(|&filled| filled));
+    }
+
+    // Unpackaged, as tests run, every setting reads as off and saving one does nothing.
+    fn page() -> Page {
+        Page::new(Rc::new(RefCell::new(CalculationHistory::default())))
+    }
+
+    fn settings_page() -> Page {
+        let mut page = page();
+        page.show_settings(&mut Vec::new());
+        page.startup_state(Some(StartupTaskState::Disabled), &mut Vec::new());
+        page
+    }
+
+    /// The toggle state UI Automation reports for `id`.
+    fn toggle_state(page: &Page, id: Id) -> Option<bool> {
+        let text = TextSystem::new().unwrap();
+        match page.elements(&text).into_iter().find(|e| e.id == id)?.role {
+            Role::ToggleButton { checked } => Some(checked),
+            Role::Switch { on } => Some(on),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn activate_pin_button_reports_toggle_and_focuses_entry() {
+        let mut page = page();
+        page.set_focus(Id::PinButton, true);
+        let mut out = Vec::new();
+        page.activate(Id::PinButton, &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::PinButton, on: true }]);
+        assert_eq!(toggle_state(&page, Id::PinButton), Some(true));
+        assert_eq!(page.focus(), Id::Entry);
+    }
+
+    #[test]
+    fn activate_history_button_reports_toggle_each_way() {
+        let mut page = page();
+        let mut out = Vec::new();
+        page.activate(Id::HistoryButton, &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::HistoryButton, on: true }]);
+        assert_eq!(toggle_state(&page, Id::HistoryButton), Some(true));
+
+        out.clear();
+        page.activate(Id::HistoryButton, &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::HistoryButton, on: false }]);
+        assert_eq!(toggle_state(&page, Id::HistoryButton), Some(false));
+    }
+
+    #[test]
+    fn go_back_from_history_reports_history_toggle() {
+        let mut page = page();
+        page.toggle_history(&mut Vec::new());
+        let mut out = Vec::new();
+        assert!(page.go_back(&mut out));
+        assert_eq!(out, [Command::Toggled { id: Id::HistoryButton, on: false }]);
+    }
+
+    #[test]
+    fn go_back_from_settings_reports_nothing() {
+        let mut page = settings_page();
+        let mut out = Vec::new();
+        assert!(page.go_back(&mut out));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn activate_history_item_reports_history_toggle() {
+        let mut page = page();
+        page.history.borrow_mut().add("1+1", "2");
+        page.toggle_history(&mut Vec::new());
+        assert_eq!(page.focus(), Id::HistoryItem(0));
+
+        let mut out = Vec::new();
+        page.activate(Id::HistoryItem(0), &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::HistoryButton, on: false }]);
+        assert_eq!(page.entry_text(), "1+1");
+    }
+
+    #[test]
+    fn activate_copy_result_toggle_reports_toggle_without_focus() {
+        let mut page = settings_page();
+        page.set_focus(Id::BackButton, true);
+        let mut out = Vec::new();
+        page.activate(Id::CopyResultToggle, &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::CopyResultToggle, on: true }]);
+        assert_eq!(toggle_state(&page, Id::CopyResultToggle), Some(true));
+    }
+
+    #[test]
+    fn activate_startup_toggle_reports_toggle_with_request() {
+        let mut page = settings_page();
+        let mut out = Vec::new();
+        page.activate(Id::StartupToggle, &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::StartupToggle, on: true }, Command::SetStartup(true)]);
+        assert_eq!(toggle_state(&page, Id::StartupToggle), Some(true));
+    }
+
+    #[test]
+    fn startup_state_confirmed_change_reports_nothing() {
+        let mut page = settings_page();
+        page.activate(Id::StartupToggle, &mut Vec::new());
+        let mut out = Vec::new();
+        page.startup_state(Some(StartupTaskState::Enabled), &mut out);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn startup_state_refused_change_reports_toggle_back() {
+        let mut page = settings_page();
+        page.activate(Id::StartupToggle, &mut Vec::new());
+        let mut out = Vec::new();
+        page.startup_state(Some(StartupTaskState::DisabledByUser), &mut out);
+        assert_eq!(out, [Command::Toggled { id: Id::StartupToggle, on: false }]);
+        assert_eq!(toggle_state(&page, Id::StartupToggle), Some(false));
+    }
+
+    #[test]
+    fn startup_state_first_state_reports_nothing() {
+        let mut page = page();
+        page.show_settings(&mut Vec::new());
+        let mut out = Vec::new();
+        page.startup_state(Some(StartupTaskState::Enabled), &mut out);
+        assert!(out.is_empty());
+        assert_eq!(toggle_state(&page, Id::StartupToggle), Some(true));
     }
 }

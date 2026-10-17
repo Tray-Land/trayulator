@@ -41,7 +41,7 @@ use super::graphics::Graphics;
 use super::page::{self, Command, Page};
 use super::palette::{Accents, Color, Palette};
 use super::tooltip::Tooltip;
-use super::{Element, Id, Rect, Role};
+use super::{Element, Id, Rect};
 use crate::app::DISPLAY_NAME;
 use crate::calc::history::CalculationHistory;
 use crate::{placement, startup, theme, win};
@@ -422,43 +422,27 @@ impl FlyoutWindow {
     /// and announces any focus change. `None` when the page is busy (a nested message).
     fn with_page<R>(&self, f: impl FnOnce(&mut Page, &super::graphics::TextSystem, &mut Vec<Command>) -> R) -> Option<R> {
         let mut commands = Vec::new();
-        let (result, focus) = {
+        let (result, focus_before, focus_after) = {
             let mut graphics = self.graphics.try_borrow_mut().ok()?;
             if graphics.is_none() {
                 *graphics = Graphics::new().ok();
             }
             let graphics = graphics.as_ref()?;
             let mut page = self.page.try_borrow_mut().ok()?;
-            let before = (page.focus(), self.toggle_state(&page));
+            let before = page.focus();
             let result = f(&mut page, &graphics.text, &mut commands);
-            let after = (page.focus(), self.toggle_state(&page));
-            (result, (before, after))
+            (result, before, page.focus())
         };
 
+        // Commands, and so toggles, go first: screen readers speak a toggle on the element they
+        // have focus on, so the Pin button's flip is raised before focus moves on to the entry.
         for command in commands {
             self.run(command);
         }
-
-        let ((focus_before, toggle_before), (focus_after, toggle_after)) = focus;
         if focus_after != focus_before {
             self.raise_focus_changed(focus_after);
-        } else if toggle_after != toggle_before
-            && let (Some(root), Some(on)) = (self.accessibility.borrow().clone(), toggle_after)
-        {
-            a11y::raise_toggled(&root, self.host(), focus_after, on);
         }
         Some(result)
-    }
-
-    /// The toggle state of the focused element, so a flip can be announced.
-    fn toggle_state(&self, page: &Page) -> Option<bool> {
-        let graphics = self.graphics.try_borrow().ok()?;
-        let elements = page.elements(&graphics.as_ref()?.text);
-        match elements.iter().find(|e| e.id == page.focus())?.role {
-            Role::ToggleButton { checked } => Some(checked),
-            Role::Switch { on } => Some(on),
-            _ => None,
-        }
     }
 
     /// Repaints, restarts the caret blink and keeps any new motion running after input.
@@ -476,6 +460,7 @@ impl FlyoutWindow {
             Command::SetTrayStatus(status) => (self.on_status)(&status),
             Command::QueryStartup => self.update_startup(None),
             Command::SetStartup(on) => self.update_startup(Some(on)),
+            Command::Toggled { id, on } => self.raise_toggled(id, on),
         }
     }
 
@@ -517,7 +502,7 @@ impl FlyoutWindow {
         match key {
             VK_ESCAPE => {
                 // Escape steps back out of settings or history first, then hides.
-                if self.with_page(|page, _, _| page.go_back()) == Some(false) {
+                if self.with_page(|page, _, out| page.go_back(out)) == Some(false) {
                     self.hide();
                 }
             }
@@ -525,7 +510,7 @@ impl FlyoutWindow {
                 self.with_page(|page, text, _| page.move_focus(text, !shift));
             }
             VK_H if ctrl => {
-                self.with_page(|page, _, _| page.toggle_history());
+                self.with_page(|page, _, out| page.toggle_history(out));
             }
             _ => {
                 self.with_page(|page, _, out| page.key_down(key, ctrl, shift, out));
@@ -535,7 +520,7 @@ impl FlyoutWindow {
     }
 
     fn go_back(&self) {
-        self.with_page(|page, _, _| page.go_back());
+        self.with_page(|page, _, out| page.go_back(out));
         self.after_input();
     }
 
@@ -721,6 +706,8 @@ impl FlyoutWindow {
         self.me.clone()
     }
 
+    // The raise functions take the root out of its RefCell first: raising an event can bring a
+    // nested WM_GETOBJECT, which needs to borrow it.
     fn raise_focus_changed(&self, focus: Id) {
         let root = self.accessibility.borrow().clone();
         if let Some(root) = root {
@@ -728,11 +715,18 @@ impl FlyoutWindow {
         }
     }
 
+    fn raise_toggled(&self, id: Id, on: bool) {
+        let root = self.accessibility.borrow().clone();
+        if let Some(root) = root {
+            a11y::raise_toggled(&root, self.host(), id, on);
+        }
+    }
+
     fn get_object(&self, hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         if lparam.0 as i32 != UiaRootObjectId {
             return None;
         }
-        let root = self.accessibility.borrow_mut().get_or_insert_with(|| a11y::root(self.host())).clone();
+        let root = self.accessibility.try_borrow_mut().ok()?.get_or_insert_with(|| a11y::root(self.host())).clone();
         Some(unsafe { UiaReturnRawElementProvider(hwnd, wparam, lparam, &root) })
     }
 
@@ -912,7 +906,7 @@ impl win::WindowProc for FlyoutWindow {
             }
             STARTUP_MESSAGE => {
                 let state = wparam.0.checked_sub(1).map(|s| StartupTaskState(s as i32));
-                self.with_page(|page, _, _| page.startup_state(state));
+                self.with_page(|page, _, out| page.startup_state(state, out));
                 self.invalidate();
                 Some(LRESULT(0))
             }
